@@ -678,7 +678,7 @@ final class ClassMetadataIndex
         }
 
         if (str_starts_with($arguments, '[')) {
-            if (preg_match_all('/(?P<class>\\?[A-Za-z_][A-Za-z0-9_\\]*)\s*::\s*class\s*=>\s*(?P<value>\[[^\]]*\]|[\'\"][^\'\"]*[\'\"])/s', $arguments, $entries, PREG_SET_ORDER) === false) {
+            if (preg_match_all('/(?P<class>\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class\s*=>\s*(?P<value>\[[^\]]*\]|[\'\"][^\'\"]*[\'\"])/s', $arguments, $entries, PREG_SET_ORDER) === false) {
                 return;
             }
 
@@ -706,7 +706,7 @@ final class ClassMetadataIndex
         }
 
         $parts = $this->splitTopLevelArguments($arguments);
-        if ($parts === [] || preg_match('/^\s*(\\?[A-Za-z_][A-Za-z0-9_\\]*)\s*::\s*class\s*$/', $parts[0], $match) !== 1) {
+        if ($parts === [] || preg_match('/^\s*(\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class\s*$/', $parts[0], $match) !== 1) {
             return;
         }
 
