@@ -164,7 +164,7 @@ final class TransactionGuardCommand extends Command
 
     private function escapeGithubCommandValue(string $value): string
     {
-        return str_replace(["%", "\r", "\n", ':', ','], ['%25', '%0D', '%0A', '%3A', '%2C'], $value);
+        return str_replace(['%', "\r", "\n", ':', ','], ['%25', '%0D', '%0A', '%3A', '%2C'], $value);
     }
 
     private function absolutePath(string $path): string

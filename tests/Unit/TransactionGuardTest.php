@@ -16,7 +16,7 @@ it('discovers php files recursively and honors excludes', function (): void {
     file_put_contents($root.'/vendor/C.php', '<?php');
 
     try {
-        $guard = new TransactionGuard();
+        $guard = new TransactionGuard;
         $files = $guard->discoverPhpFiles([$root], ['vendor']);
 
         expect($files)->toHaveCount(2)
@@ -47,7 +47,7 @@ DB::transaction(function () { Http::post('https://example.test'); });
 PHP);
 
     try {
-        $guard = new TransactionGuard(new AnalysisConfig());
+        $guard = new TransactionGuard(new AnalysisConfig);
         $raw = $guard->analyze([$root]);
         expect($raw->filesAnalyzed)->toBe(1)
             ->and($raw->findings)->not->toBeEmpty();

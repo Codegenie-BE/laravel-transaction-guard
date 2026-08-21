@@ -143,6 +143,7 @@ final class ClassMetadataIndex
                     }
                     $mode = 'implements';
                     $buffer = '';
+
                     continue;
                 }
 
@@ -152,6 +153,7 @@ final class ClassMetadataIndex
                     }
                     $mode = 'extends';
                     $buffer = '';
+
                     continue;
                 }
 
@@ -186,7 +188,7 @@ final class ClassMetadataIndex
     }
 
     /**
-     * @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens
+     * @param  list<array{id:int|null,text:string,line:int,offset:int}>  $tokens
      */
     private function parseContext(array $tokens): FileContext
     {
@@ -214,7 +216,8 @@ final class ClassMetadataIndex
                         $name .= $tokens[$j]['text'];
                     }
                 }
-                $namespace = trim($name, " \\t\\n\\r\\0\\x0B\\\\");
+                $namespace = trim($name, ' \\t\\n\\r\\0\\x0B\\\\');
+
                 continue;
             }
 
@@ -306,7 +309,7 @@ final class ClassMetadataIndex
     }
 
     /**
-     * @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens
+     * @param  list<array{id:int|null,text:string,line:int,offset:int}>  $tokens
      * @return array{bool,bool,string|null}
      */
     private function constructorCommitBehavior(array $tokens, int $start, int $end, string $source): array
@@ -466,28 +469,38 @@ final class ClassMetadataIndex
             if ($quote !== null) {
                 if ($escaped) {
                     $escaped = false;
+
                     continue;
                 }
                 if ($char === '\\') {
                     $escaped = true;
+
                     continue;
                 }
                 if ($char === $quote) {
                     $quote = null;
                 }
+
                 continue;
             }
             if ($char === '\'' || $char === '"') {
                 $quote = $char;
+
                 continue;
             }
-            if ($char === '(') $paren++;
-            elseif ($char === ')') $paren--;
-            elseif ($char === '[') $bracket++;
-            elseif ($char === ']') $bracket--;
-            elseif ($char === '{') $brace++;
-            elseif ($char === '}') $brace--;
-            elseif ($char === ',' && $paren === 0 && $bracket === 0 && $brace === 0) {
+            if ($char === '(') {
+                $paren++;
+            } elseif ($char === ')') {
+                $paren--;
+            } elseif ($char === '[') {
+                $bracket++;
+            } elseif ($char === ']') {
+                $bracket--;
+            } elseif ($char === '{') {
+                $brace++;
+            } elseif ($char === '}') {
+                $brace--;
+            } elseif ($char === ',' && $paren === 0 && $bracket === 0 && $brace === 0) {
                 $parts[] = trim(substr($source, $start, $i - $start));
                 $start = $i + 1;
             }

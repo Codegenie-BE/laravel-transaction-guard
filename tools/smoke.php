@@ -19,9 +19,9 @@ foreach ([
 }
 
 use Codegenie\TransactionGuard\Analysis\AnalysisConfig;
+use Codegenie\TransactionGuard\Analysis\Baseline;
 use Codegenie\TransactionGuard\Analysis\ClassMetadataIndex;
 use Codegenie\TransactionGuard\Analysis\SourceScanner;
-use Codegenie\TransactionGuard\Analysis\Baseline;
 use Codegenie\TransactionGuard\TransactionGuard;
 
 /** @var array<string, array{code:string,rules:list<string>,absent?:list<string>,config?:array<string,mixed>}> $cases */
@@ -71,7 +71,7 @@ foreach ($cases as $name => $case) {
         fwrite(STDERR, '  actual: '.($rules === [] ? '(none)' : implode(', ', $rules))."\n");
     } else {
         $passed++;
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
     }
 
     @unlink($phpFile);
@@ -125,7 +125,7 @@ class RoutedService { public function run(): void { DB::transaction(fn () => Rou
 PHP);
 
 try {
-    $guard = new TransactionGuard(new AnalysisConfig());
+    $guard = new TransactionGuard(new AnalysisConfig);
     $result = $guard->analyze([$integrationRoot.'/app']);
     $rulesByFile = [];
     foreach ($result->findings as $finding) {
@@ -136,7 +136,7 @@ try {
         fwrite(STDERR, "FAIL: cross-file ShouldQueueAfterCommit metadata\n");
         $failed++;
     } else {
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
         $passed++;
     }
 
@@ -144,7 +144,7 @@ try {
         fwrite(STDERR, "FAIL: directory analysis integration\n");
         $failed++;
     } else {
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
         $passed++;
     }
 
@@ -161,7 +161,7 @@ try {
         fwrite(STDERR, "FAIL: cross-file Laravel 13 Queue::route metadata\n");
         $failed++;
     } else {
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
         $passed++;
     }
 
@@ -171,7 +171,7 @@ try {
         fwrite(STDERR, "FAIL: baseline filtering integration\n");
         $failed++;
     } else {
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
         $passed++;
     }
 
@@ -180,16 +180,16 @@ try {
         fwrite(STDERR, "FAIL: file exclusion integration\n");
         $failed++;
     } else {
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
         $passed++;
     }
 
-    $missing = (new SourceScanner(ClassMetadataIndex::fromFiles([]), new AnalysisConfig()))->scan($integrationRoot.'/missing.php');
+    $missing = (new SourceScanner(ClassMetadataIndex::fromFiles([]), new AnalysisConfig))->scan($integrationRoot.'/missing.php');
     if (count($missing) !== 1 || $missing[0]->rule !== 'TG900') {
         fwrite(STDERR, "FAIL: unreadable source reporting\n");
         $failed++;
     } else {
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
         $passed++;
     }
 
@@ -198,7 +198,7 @@ try {
         fwrite(STDERR, "FAIL: invalid custom regex validation\n");
         $failed++;
     } catch (InvalidArgumentException) {
-        fwrite(STDOUT, ".");
+        fwrite(STDOUT, '.');
         $passed++;
     }
 } finally {

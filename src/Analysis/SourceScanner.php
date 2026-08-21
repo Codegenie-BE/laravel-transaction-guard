@@ -21,7 +21,9 @@ final class SourceScanner
     private array $afterCommitCallbacks = [];
 
     private string $source = '';
+
     private string $file = '';
+
     private FileContext $context;
 
     public function __construct(
@@ -155,6 +157,7 @@ final class SourceScanner
                         'Move the dispatch outside the transaction or make any irreversible work explicitly post-commit.',
                         'high', ['transaction_type' => $tx['type']]);
                     $this->appendRetryFinding($findings, $offset, $tx, 'synchronous job dispatch');
+
                     continue;
                 }
 
@@ -163,12 +166,14 @@ final class SourceScanner
                         "After-response dispatch is not a transaction boundary for [{$this->basename($resolved)}].",
                         'Prefer afterCommit() when correctness depends on a successful database commit.',
                         'medium', ['transaction_type' => $tx['type']]);
+
                     continue;
                 }
 
                 if ($this->statementContainsBeforeCommit($statement)) {
                     // TG010 already reports the explicit override.
                     $this->appendRetryFinding($findings, $offset, $tx, 'job dispatch');
+
                     continue;
                 }
 
@@ -205,6 +210,7 @@ final class SourceScanner
                     $this->appendFinding($findings, $offset, 'TG017', Severity::Warning,
                         'Bus::dispatchAfterResponse() does not guarantee that the surrounding transaction committed successfully.',
                         'Use an after-commit dispatch when the work depends on committed state.', 'medium');
+
                     continue;
                 }
 
@@ -213,6 +219,7 @@ final class SourceScanner
                         'Bus::dispatchSync() executes while the database transaction is still open.',
                         'Move synchronous work outside the transaction when it can cause irreversible side effects.', 'high');
                     $this->appendRetryFinding($findings, $offset, $tx, 'synchronous bus dispatch');
+
                     continue;
                 }
 
@@ -221,6 +228,7 @@ final class SourceScanner
                         "Bus::{$method}() is created/dispatched from inside a database transaction and cannot be proven commit-safe statically.",
                         'Create and dispatch the chain/batch after commit, or wrap the dispatch in DB::afterCommit().', 'medium');
                     $this->appendRetryFinding($findings, $offset, $tx, "bus {$method} dispatch");
+
                     continue;
                 }
 
@@ -675,6 +683,7 @@ final class SourceScanner
         foreach ($this->manualControlCalls() as $call) {
             if ($call['type'] === 'begin') {
                 $stack[] = $call;
+
                 continue;
             }
             if (in_array($call['type'], ['commit', 'rollback'], true) && $stack !== []) {
@@ -766,6 +775,7 @@ final class SourceScanner
                     $groupStart = $call;
                 }
                 $depth++;
+
                 continue;
             }
 
@@ -1393,16 +1403,26 @@ final class SourceScanner
         $paren = $bracket = $brace = 0;
         for ($i = $startToken; $i <= $limit; $i++) {
             $text = $this->tokens[$i]['text'];
-            if ($text === '(') $paren++;
-            elseif ($text === ')') {
-                if ($paren === 0 && $bracket === 0 && $brace === 0) return $this->tokens[$i]['offset'];
+            if ($text === '(') {
+                $paren++;
+            } elseif ($text === ')') {
+                if ($paren === 0 && $bracket === 0 && $brace === 0) {
+                    return $this->tokens[$i]['offset'];
+                }
                 $paren = max(0, $paren - 1);
-            } elseif ($text === '[') $bracket++;
-            elseif ($text === ']') $bracket = max(0, $bracket - 1);
-            elseif ($text === '{') $brace++;
-            elseif ($text === '}') $brace = max(0, $brace - 1);
-            elseif ($text === ',' && $paren === 0 && $bracket === 0 && $brace === 0) return $this->tokens[$i]['offset'];
-            elseif ($text === ';' && $paren === 0 && $bracket === 0 && $brace === 0) return $this->tokens[$i]['offset'];
+            } elseif ($text === '[') {
+                $bracket++;
+            } elseif ($text === ']') {
+                $bracket = max(0, $bracket - 1);
+            } elseif ($text === '{') {
+                $brace++;
+            } elseif ($text === '}') {
+                $brace = max(0, $brace - 1);
+            } elseif ($text === ',' && $paren === 0 && $bracket === 0 && $brace === 0) {
+                return $this->tokens[$i]['offset'];
+            } elseif ($text === ';' && $paren === 0 && $bracket === 0 && $brace === 0) {
+                return $this->tokens[$i]['offset'];
+            }
         }
 
         return $this->tokens[$limit]['end'] ?? strlen($this->source);

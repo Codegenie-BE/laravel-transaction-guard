@@ -7,9 +7,9 @@ namespace Codegenie\TransactionGuard\Analysis;
 final readonly class AnalysisConfig
 {
     /**
-     * @param array<string, bool> $queueAfterCommitByConnection
-     * @param list<string> $customSideEffectPatterns
-     * @param list<string> $disabledRules
+     * @param  array<string, bool>  $queueAfterCommitByConnection
+     * @param  list<string>  $customSideEffectPatterns
+     * @param  list<string>  $disabledRules
      */
     public function __construct(
         public string $defaultQueueConnection = 'sync',

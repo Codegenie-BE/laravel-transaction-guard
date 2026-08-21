@@ -19,8 +19,8 @@ final class TransactionGuard
     public function __construct(private readonly AnalysisConfig $config = new AnalysisConfig) {}
 
     /**
-     * @param list<string> $paths
-     * @param list<string> $excludePatterns
+     * @param  list<string>  $paths
+     * @param  list<string>  $excludePatterns
      */
     public function analyze(array $paths, array $excludePatterns = [], ?Baseline $baseline = null): AnalysisResult
     {
@@ -44,8 +44,8 @@ final class TransactionGuard
     }
 
     /**
-     * @param list<string> $paths
-     * @param list<string> $excludePatterns
+     * @param  list<string>  $paths
+     * @param  list<string>  $excludePatterns
      * @return list<string>
      */
     public function discoverPhpFiles(array $paths, array $excludePatterns = []): array
@@ -57,6 +57,7 @@ final class TransactionGuard
                 if (! $this->excluded($path, $excludePatterns)) {
                     $files[] = realpath($path) ?: $path;
                 }
+
                 continue;
             }
 
