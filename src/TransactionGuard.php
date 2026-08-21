@@ -58,6 +58,7 @@ final class TransactionGuard
                 if (! $this->excluded($path, $excludePatterns)) {
                     $files[] = realpath($path) ?: $path;
                 }
+
                 continue;
             }
 
@@ -110,6 +111,7 @@ final class TransactionGuard
                 if (fnmatch($pattern, $normalized) || fnmatch('*/'.$pattern, $normalized) || fnmatch('*/'.$pattern.'/*', $normalized)) {
                     return true;
                 }
+
                 continue;
             }
 
@@ -117,6 +119,7 @@ final class TransactionGuard
                 if (in_array($pattern, $segments, true)) {
                     return true;
                 }
+
                 continue;
             }
 

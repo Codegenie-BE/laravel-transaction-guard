@@ -308,10 +308,12 @@ final class ClassMetadataIndex
             $text = $tokens[$i]['text'];
             if ($text === '{') {
                 $depth++;
+
                 continue;
             }
             if ($text === '}') {
                 $depth = max(0, $depth - 1);
+
                 continue;
             }
 
@@ -849,19 +851,23 @@ final class ClassMetadataIndex
             if ($quote !== null) {
                 if ($escaped) {
                     $escaped = false;
+
                     continue;
                 }
                 if ($char === '\\') {
                     $escaped = true;
+
                     continue;
                 }
                 if ($char === $quote) {
                     $quote = null;
                 }
+
                 continue;
             }
             if ($char === '\'' || $char === '"') {
                 $quote = $char;
+
                 continue;
             }
             if ($char === '(') {

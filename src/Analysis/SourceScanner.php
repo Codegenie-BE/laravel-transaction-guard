@@ -173,6 +173,7 @@ final class SourceScanner
                         'Move the dispatch outside the transaction or make any irreversible work explicitly post-commit.',
                         'high', ['transaction_type' => $tx['type'], 'database_connection' => $tx['connection']]);
                     $this->appendRetryFinding($findings, $offset, $tx, 'synchronous job dispatch');
+
                     continue;
                 }
 
@@ -181,12 +182,14 @@ final class SourceScanner
                         "After-response dispatch is not a transaction boundary for [{$this->basename($resolved)}].",
                         'Prefer afterCommit() when correctness depends on a successful database commit.',
                         'medium', ['transaction_type' => $tx['type']]);
+
                     continue;
                 }
 
                 if ($this->statementContainsBeforeCommit($statement)) {
                     $this->appendExplicitBeforeCommitFinding($findings, $offset);
                     $this->appendRetryFinding($findings, $offset, $tx, 'job dispatch');
+
                     continue;
                 }
 
@@ -222,6 +225,7 @@ final class SourceScanner
             if ($this->statementContainsBeforeCommit($statement)) {
                 $this->appendExplicitBeforeCommitFinding($findings, $offset);
                 $this->appendRetryFinding($findings, $offset, $tx, 'queued closure dispatch');
+
                 continue;
             }
 
@@ -229,6 +233,7 @@ final class SourceScanner
                 $this->appendFinding($findings, $offset, 'TG017', Severity::Warning,
                     'A queued closure is deferred until after the response, which is not a database commit boundary.',
                     'Use afterCommit() when the closure depends on committed state.', 'high');
+
                 continue;
             }
 
@@ -276,12 +281,14 @@ final class SourceScanner
             if ($this->statementContainsBeforeCommit($statement)) {
                 $this->appendExplicitBeforeCommitFinding($findings, $offset);
                 $this->appendRetryFinding($findings, $offset, $tx, 'job chain dispatch');
+
                 continue;
             }
             if ($this->statementContainsAfterResponse($statement)) {
                 $this->appendFinding($findings, $offset, 'TG017', Severity::Warning,
                     'A job chain is deferred until after the response, not after a successful database commit.',
                     'Use afterCommit() on the returned pending dispatch.', 'high');
+
                 continue;
             }
             if ($this->jobDispatchIsAfterCommitSafe($statement, $metadata)) {
@@ -317,6 +324,7 @@ final class SourceScanner
                     $this->appendFinding($findings, $offset, 'TG017', Severity::Warning,
                         'Bus after-response dispatch does not guarantee that the surrounding transaction committed successfully.',
                         'Use an after-commit dispatch when the work depends on committed state.', 'medium');
+
                     continue;
                 }
 
@@ -325,12 +333,14 @@ final class SourceScanner
                         'Bus::dispatchSync() executes while the database transaction is still open.',
                         'Move synchronous work outside the transaction when it can cause irreversible side effects.', 'high');
                     $this->appendRetryFinding($findings, $offset, $tx, 'synchronous bus dispatch');
+
                     continue;
                 }
 
                 if ($this->statementContainsBeforeCommit($statement)) {
                     $this->appendExplicitBeforeCommitFinding($findings, $offset);
                     $this->appendRetryFinding($findings, $offset, $tx, 'bus dispatch');
+
                     continue;
                 }
 
@@ -339,6 +349,7 @@ final class SourceScanner
                         'Bus::batch() is dispatched from inside a database transaction and has no general afterCommit pending-dispatch contract.',
                         'Dispatch the batch from DB::afterCommit() or after the transaction.', 'high');
                     $this->appendRetryFinding($findings, $offset, $tx, 'bus batch dispatch');
+
                     continue;
                 }
 
@@ -350,6 +361,7 @@ final class SourceScanner
                         'Bus::chain() is dispatched from inside a database transaction and cannot be proven commit-safe.',
                         'Call afterCommit() on the returned pending dispatch or dispatch the chain after commit.', 'medium');
                     $this->appendRetryFinding($findings, $offset, $tx, 'bus chain dispatch');
+
                     continue;
                 }
 
@@ -380,6 +392,7 @@ final class SourceScanner
                         "Queue::{$this->captured($match, 'method')}() bypasses Laravel's job-aware after-commit enqueue path.",
                         'Push raw payloads from DB::afterCommit() or after the transaction; queue after_commit cannot make a raw payload job-aware.', 'high');
                     $this->appendRetryFinding($findings, $offset, $tx, 'raw queue push');
+
                     continue;
                 }
 
@@ -943,6 +956,7 @@ final class SourceScanner
             $key = $call['scope'].'|'.$call['connection'];
             if ($call['type'] === 'begin') {
                 $stacks[$key][] = $call;
+
                 continue;
             }
 
@@ -1043,6 +1057,7 @@ final class SourceScanner
                         $groupStart = $call;
                     }
                     $depth++;
+
                     continue;
                 }
 
@@ -1554,6 +1569,7 @@ final class SourceScanner
 
             if ($best === null) {
                 $best = $candidate;
+
                 continue;
             }
 
@@ -1561,6 +1577,7 @@ final class SourceScanner
             $bestKnown = $best['attempts'] > 1;
             if ($candidateKnown && ! $bestKnown) {
                 $best = $candidate;
+
                 continue;
             }
             if ($candidateKnown === $bestKnown && $candidate['attempts'] > $best['attempts']) {
