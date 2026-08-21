@@ -157,7 +157,7 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-            echo "${tag} already exists; release publication is already complete or in progress."
+            echo "${tag} already exists; checking release publication state."
             echo 'publish=false' >> "$GITHUB_OUTPUT"
           else
             echo "Publishing ${tag} from ${GITHUB_SHA}."
@@ -174,15 +174,21 @@ jobs:
           git tag --annotate "${RELEASE_TAG}" --message "${RELEASE_TAG}"
           git push origin "${RELEASE_TAG}"
 
-      - name: Create GitHub release
-        if: steps.release.outputs.publish == 'true'
+      - name: Ensure GitHub release exists
+        if: steps.release.outputs.tag != ''
         env:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
-        run: >-
-          gh release create "${RELEASE_TAG}"
-          --verify-tag
-          --generate-notes
-          --title "${RELEASE_TAG}"
+        shell: bash
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "GitHub release ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --verify-tag \
+            --generate-notes \
+            --title "${RELEASE_TAG}"
 
       - name: Check Packagist visibility
         if: steps.release.outputs.tag != ''
