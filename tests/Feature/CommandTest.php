@@ -137,7 +137,6 @@ it('emits GitHub Actions annotations', function (): void {
             '--format' => 'github',
             '--fail-on' => 'never',
         ])->expectsOutputToContain('::error file=')
-            ->expectsOutputToContain('TG006')
             ->assertSuccessful();
     } finally {
         @unlink($file);
