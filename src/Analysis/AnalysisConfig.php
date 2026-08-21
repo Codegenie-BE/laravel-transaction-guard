@@ -19,7 +19,14 @@ final readonly class AnalysisConfig
         public bool $detectReadHttpCalls = false,
     ) {
         foreach ($this->customSideEffectPatterns as $pattern) {
-            if (@preg_match($pattern, '') === false) {
+            set_error_handler(static fn (): bool => true);
+            try {
+                $valid = preg_match($pattern, '') !== false;
+            } finally {
+                restore_error_handler();
+            }
+
+            if (! $valid) {
                 throw new \InvalidArgumentException("Invalid custom side-effect regular expression [{$pattern}].");
             }
         }
