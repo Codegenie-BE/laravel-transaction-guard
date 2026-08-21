@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a false positive, false negative, crash, or integration problem.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include credentials, customer data, or other secrets. Security vulnerabilities belong in GitHub private vulnerability reporting."
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Transaction Guard, Laravel, and PHP versions.
+      placeholder: "Transaction Guard 0.x; Laravel 13.x; PHP 8.4"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Provide the smallest PHP snippet that demonstrates the problem.
+      render: php
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Include queue connection and after_commit configuration when relevant. Remove secrets.
+      render: php
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

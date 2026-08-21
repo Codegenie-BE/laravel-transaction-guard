@@ -1,0 +1,7 @@
+/vendor/
+/.idea/
+/.vscode/
+.phpunit.cache/
+.phpstan-cache/
+coverage.xml
+composer.lock

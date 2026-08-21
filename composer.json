@@ -1,0 +1,118 @@
+{
+    "name": "codegenie-be/laravel-transaction-guard",
+    "description": "Static analysis for unsafe jobs, events, mail, notifications and irreversible side effects inside Laravel database transactions.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "transactions",
+        "database",
+        "queue",
+        "after-commit",
+        "static-analysis",
+        "ci",
+        "developer-tools",
+        "codegenie"
+    ],
+    "authors": [
+        {
+            "name": "Codegenie",
+            "homepage": "https://www.codegenie.be"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/Codegenie-BE/laravel-transaction-guard/issues",
+        "source": "https://github.com/Codegenie-BE/laravel-transaction-guard"
+    },
+    "require": {
+        "php": "^8.2",
+        "ext-tokenizer": "*",
+        "illuminate/console": "^12.0|^13.0",
+        "illuminate/support": "^12.0|^13.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.10",
+        "laravel/pint": "^1.0",
+        "orchestra/testbench": "^10.0|^11.0",
+        "pestphp/pest": "^3.0|^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Codegenie\\TransactionGuard\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Codegenie\\TransactionGuard\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Codegenie\\TransactionGuard\\TransactionGuardServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "analyse": "phpstan analyse --memory-limit=512M",
+        "check": [
+            "@check:composer",
+            "@check:security",
+            "@check:autoload",
+            "@format:test",
+            "@analyse",
+            "@test:smoke"
+        ],
+        "check:all": [
+            "@check",
+            "@test"
+        ],
+        "check:autoload": "@composer dump-autoload --optimize --strict-psr --no-interaction",
+        "check:composer": "@composer validate --strict",
+        "check:security": "@composer audit --no-interaction",
+        "format": "pint",
+        "format:test": "pint --test",
+        "test": "pest",
+        "test:coverage": "pest --coverage --min=80",
+        "test:smoke": "@php tools/smoke.php"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "archive": {
+        "exclude": [
+            "/.github",
+            "/docs",
+            "/tests",
+            "/tools",
+            "/vendor",
+            "/.gitattributes",
+            "/.gitignore",
+            "/ADOPTERS.md",
+            "/CODE_OF_CONDUCT.md",
+            "/CONTRIBUTING.md",
+            "/SUPPORT.md",
+            "/composer.lock",
+            "/phpstan.neon",
+            "/phpunit.xml"
+        ]
+    },
+    "scripts-descriptions": {
+        "analyse": "Run Larastan static analysis.",
+        "check": "Run Composer metadata, security, autoload, formatting, static-analysis and smoke checks.",
+        "check:all": "Run the complete fast quality gate and Pest suite.",
+        "check:autoload": "Build an optimized autoloader and reject invalid PSR mappings.",
+        "check:composer": "Validate composer.json strictly.",
+        "check:security": "Audit installed dependencies for known security advisories.",
+        "format": "Apply Laravel Pint formatting.",
+        "format:test": "Check Laravel Pint formatting without changing files.",
+        "test": "Run the Pest suite.",
+        "test:coverage": "Run Pest with the enforced 80% coverage baseline.",
+        "test:smoke": "Run the dependency-free transaction-safety regression matrix."
+    }
+}
