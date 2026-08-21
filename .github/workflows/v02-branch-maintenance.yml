@@ -1,0 +1,76 @@
+name: V0.2 branch maintenance
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: v02-branch-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    if: >-
+      github.actor == 'jordyloeuille' &&
+      github.event.issue.title == 'Run Transaction Guard v0.2 maintenance round 2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout clean PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: feature/v0.2-analyzer-hardening-clean
+          fetch-depth: 0
+
+      - name: Remove duplicate helper
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/Analysis/SourceScanner.php')
+          text = path.read_text()
+          needle = '    private function callArgumentContainsPreference(string $statement, string $callMethod, string $preference): bool\n'
+          first = text.find(needle)
+          second = text.find(needle, first + 1)
+          if first < 0:
+              raise SystemExit('callArgumentContainsPreference helper is missing')
+          if second >= 0:
+              end_marker = '    private function statementContainsBeforeCommit(string $statement): bool\n'
+              end = text.find(end_marker, second)
+              if end < 0:
+                  raise SystemExit('Could not find end of duplicate helper')
+              path.write_text(text[:second] + text[end:])
+          PY
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Apply Pint
+        run: composer format
+
+      - name: Commit branch fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- src/Analysis/SourceScanner.php
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: remove duplicate analyzer helper'
+            git push origin HEAD:feature/v0.2-analyzer-hardening-clean
+          fi
+
+      - name: Run smoke matrix
+        run: composer test:smoke
+
+      - name: Run PHPStan
+        run: composer analyse
