@@ -74,7 +74,8 @@
         "format:test": "pint --test",
         "test": "pest",
         "test:coverage": "pest --coverage --min=80",
-        "test:smoke": "@php tools/smoke.php"
+        "test:smoke": "@php tools/smoke.php",
+        "benchmark": "@php tools/benchmark.php"
     },
     "minimum-stability": "stable",
     "prefer-stable": true,

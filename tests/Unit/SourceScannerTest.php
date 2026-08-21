@@ -24,6 +24,7 @@ function scanTransactionGuardScenario(array $case): array
         customSideEffectPatterns: (array) ($cfg['custom_side_effect_patterns'] ?? []),
         disabledRules: (array) ($cfg['disabled_rules'] ?? []),
         detectReadHttpCalls: (bool) ($cfg['detect_read_http_calls'] ?? false),
+        defaultDatabaseConnection: (string) ($cfg['database_default'] ?? '@default'),
     );
 
     try {

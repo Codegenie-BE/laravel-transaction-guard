@@ -47,3 +47,8 @@ The analyzer builds a lightweight class metadata index for imports, inheritance,
 ## Release boundaries
 
 The first release intentionally stops short of a full PHP call-graph engine. Trait-based and array-form Laravel 13 queue routes, `Queue::forward()`, queue attributes/enums, arbitrary observer/listener indirection, and runtime configuration mutation remain documented limitations rather than guessed behavior. Critical cross-system atomic delivery remains an application architecture concern; use a transactional outbox/idempotency where required.
+
+
+## Static-analysis boundary
+
+Transaction Guard deliberately does not pretend to resolve arbitrary macros, reflection, container bindings, dynamic database/queue connection expressions, or user-defined higher-order callbacks. It reports high-confidence framework semantics and leaves dynamic behavior to custom patterns or human review. This is preferable to converting uncertain regex guesses into release-blocking findings.

@@ -10,6 +10,7 @@ use Codegenie\TransactionGuard\Analysis\Baseline;
 use Codegenie\TransactionGuard\Analysis\ClassMetadataIndex;
 use Codegenie\TransactionGuard\Analysis\Finding;
 use Codegenie\TransactionGuard\Analysis\SourceScanner;
+use RecursiveCallbackFilterIterator;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
@@ -57,16 +58,22 @@ final class TransactionGuard
                 if (! $this->excluded($path, $excludePatterns)) {
                     $files[] = realpath($path) ?: $path;
                 }
-
                 continue;
             }
 
-            if (! is_dir($path)) {
+            if (! is_dir($path) || $this->excluded($path, $excludePatterns)) {
                 continue;
             }
 
+            $directory = new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS);
+            $filter = new RecursiveCallbackFilterIterator(
+                $directory,
+                fn (SplFileInfo $entry): bool => ! $this->excluded($entry->getPathname(), $excludePatterns),
+            );
             $iterator = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS)
+                $filter,
+                RecursiveIteratorIterator::LEAVES_ONLY,
+                RecursiveIteratorIterator::CATCH_GET_CHILD,
             );
 
             /** @var SplFileInfo $file */
@@ -87,16 +94,35 @@ final class TransactionGuard
         return $files;
     }
 
-    /** @param list<string> $patterns */
+    /** @param  list<string>  $patterns */
     private function excluded(string $path, array $patterns): bool
     {
-        $normalized = str_replace('\\', '/', $path);
+        $normalized = trim(str_replace('\\', '/', $path), '/');
+        $segments = explode('/', $normalized);
+
         foreach ($patterns as $pattern) {
-            $pattern = str_replace('\\', '/', trim($pattern));
+            $pattern = trim(str_replace('\\', '/', trim($pattern)), '/');
             if ($pattern === '') {
                 continue;
             }
-            if (str_contains($normalized, $pattern) || fnmatch($pattern, $normalized) || fnmatch('*/'.$pattern.'/*', $normalized)) {
+
+            if (strpbrk($pattern, '*?[') !== false) {
+                if (fnmatch($pattern, $normalized) || fnmatch('*/'.$pattern, $normalized) || fnmatch('*/'.$pattern.'/*', $normalized)) {
+                    return true;
+                }
+                continue;
+            }
+
+            if (! str_contains($pattern, '/')) {
+                if (in_array($pattern, $segments, true)) {
+                    return true;
+                }
+                continue;
+            }
+
+            $haystack = '/'.$normalized.'/';
+            $needle = '/'.$pattern.'/';
+            if ($normalized === $pattern || str_contains($haystack, $needle)) {
                 return true;
             }
         }

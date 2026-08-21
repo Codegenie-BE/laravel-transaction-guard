@@ -196,3 +196,8 @@ Please do not disclose security issues in a public GitHub issue. See [`SECURITY.
 ## License
 
 MIT. See [`LICENSE.md`](LICENSE.md).
+
+
+### Analyzer efficiency
+
+Transaction Guard performs no runtime instrumentation. Its tokenizer scanner pre-indexes each source file once, prunes excluded directories before traversal, and caches hot-path source lookups. For local profiling of the analyzer itself, maintainers can run `composer benchmark`; the benchmark is informational and intentionally not a timing-based CI gate.

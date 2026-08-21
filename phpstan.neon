@@ -7,27 +7,3 @@ parameters:
         - src
     tmpDir: .phpstan-cache
     reportUnmatchedIgnoredErrors: true
-
-    # Transaction Guard deliberately performs tokenizer-based control-flow analysis.
-    # These narrowly-scoped diagnostics describe PHPStan inference limitations in that
-    # dynamic analysis layer; each ignore is pinned to the exact file and identifier so
-    # unrelated static-analysis regressions still fail CI.
-    ignoreErrors:
-        -
-            identifier: argument.type
-            path: src/Analysis/ClassMetadataIndex.php
-        -
-            identifier: missingType.iterableValue
-            path: src/Analysis/ClassMetadataIndex.php
-        -
-            identifier: nullsafe.neverNull
-            path: src/Analysis/SourceScanner.php
-        -
-            identifier: identical.alwaysTrue
-            path: src/Analysis/SourceScanner.php
-        -
-            identifier: deadCode.unreachable
-            path: src/Analysis/SourceScanner.php
-        -
-            identifier: missingType.iterableValue
-            path: src/Analysis/SourceScanner.php

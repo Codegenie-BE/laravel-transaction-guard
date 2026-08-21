@@ -10,24 +10,29 @@ it('discovers php files recursively and honors excludes', function (): void {
     $root = sys_get_temp_dir().'/transaction-guard-discovery-'.bin2hex(random_bytes(4));
     mkdir($root.'/app/Nested', 0777, true);
     mkdir($root.'/vendor', 0777, true);
+    mkdir($root.'/app/vendorized', 0777, true);
     file_put_contents($root.'/app/A.php', '<?php');
     file_put_contents($root.'/app/Nested/B.php', '<?php');
     file_put_contents($root.'/app/readme.txt', 'x');
     file_put_contents($root.'/vendor/C.php', '<?php');
+    file_put_contents($root.'/app/vendorized/Keep.php', '<?php');
 
     try {
         $guard = new TransactionGuard;
         $files = $guard->discoverPhpFiles([$root], ['vendor']);
 
-        expect($files)->toHaveCount(2)
+        expect($files)->toHaveCount(3)
             ->and(implode('|', $files))->toContain('A.php')
             ->and(implode('|', $files))->toContain('B.php')
+            ->and(implode('|', $files))->toContain('Keep.php')
             ->not->toContain('C.php');
     } finally {
         @unlink($root.'/app/Nested/B.php');
         @rmdir($root.'/app/Nested');
         @unlink($root.'/app/A.php');
         @unlink($root.'/app/readme.txt');
+        @unlink($root.'/app/vendorized/Keep.php');
+        @rmdir($root.'/app/vendorized');
         @rmdir($root.'/app');
         @unlink($root.'/vendor/C.php');
         @rmdir($root.'/vendor');

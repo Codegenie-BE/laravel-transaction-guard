@@ -17,6 +17,7 @@ final readonly class AnalysisConfig
         public array $customSideEffectPatterns = [],
         public array $disabledRules = [],
         public bool $detectReadHttpCalls = false,
+        public string $defaultDatabaseConnection = '@default',
     ) {
         foreach ($this->customSideEffectPatterns as $pattern) {
             set_error_handler(static fn (): bool => true);

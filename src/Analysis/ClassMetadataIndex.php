@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Codegenie\TransactionGuard\Analysis;
 
+/**
+ * @phpstan-type Token array{id:int|null,text:string,line:int,offset:int}
+ */
 final class ClassMetadataIndex
 {
     /** @var array<string, ClassMetadata> */
@@ -15,7 +18,13 @@ final class ClassMetadataIndex
     /** @var array<string, string> Known connection name or @dynamic when a route connection is not statically resolvable. */
     private array $queueRouteConnections = [];
 
-    /** @param list<string> $files */
+    /** @var array<string, string> Queue name to forwarded connection. */
+    private array $queueForwards = [];
+
+    /** @var array<string, list<string>> */
+    private array $interfaceParents = [];
+
+    /** @param  list<string>  $files */
     public static function fromFiles(array $files): self
     {
         $index = new self;
@@ -43,27 +52,9 @@ final class ClassMetadataIndex
     {
         $class = ltrim($class, '\\');
         $exactKey = strtolower($class);
+
         if (array_key_exists($exactKey, $this->queueRouteConnections)) {
             return $this->queueRouteConnections[$exactKey];
-        }
-
-        // Laravel resolves class parents before interfaces. Preserve that ordering for
-        // statically known parent classes, then conservatively resolve interfaces.
-        $seen = [];
-        $current = $this->metadata($class);
-        while ($current?->parent !== null) {
-            $parent = ltrim($current->parent, '\\');
-            $key = strtolower($parent);
-            if (isset($seen[$key])) {
-                break;
-            }
-            $seen[$key] = true;
-
-            if (array_key_exists($key, $this->queueRouteConnections)) {
-                return $this->queueRouteConnections[$key];
-            }
-
-            $current = $this->metadata($parent);
         }
 
         $metadata = $this->metadata($class);
@@ -71,22 +62,66 @@ final class ClassMetadataIndex
             return null;
         }
 
-        $resolved = [];
+        // Laravel checks parent classes before interfaces and recursive traits.
+        $seenParents = [];
+        $current = $metadata;
+        while ($current->parent !== null) {
+            $parent = ltrim($current->parent, '\\');
+            $key = strtolower($parent);
+            if (isset($seenParents[$key])) {
+                break;
+            }
+            $seenParents[$key] = true;
+
+            if (array_key_exists($key, $this->queueRouteConnections)) {
+                return $this->queueRouteConnections[$key];
+            }
+
+            $next = $this->metadata($parent);
+            if ($next === null) {
+                break;
+            }
+            $current = $next;
+        }
+
+        $interfaceRoutes = [];
         foreach ($metadata->interfaces as $interface) {
             $key = strtolower(ltrim($interface, '\\'));
             if (array_key_exists($key, $this->queueRouteConnections)) {
-                $resolved[] = $this->queueRouteConnections[$key];
+                $interfaceRoutes[] = $this->queueRouteConnections[$key];
             }
         }
 
-        $resolved = array_values(array_unique($resolved));
-        if ($resolved === []) {
-            return null;
+        $resolvedInterfaces = array_values(array_unique($interfaceRoutes));
+        if (count($resolvedInterfaces) === 1) {
+            return $resolvedInterfaces[0];
+        }
+        if (count($resolvedInterfaces) > 1) {
+            return '@dynamic';
         }
 
-        // Interface enumeration order can be difficult to prove statically when
-        // inheritance is involved; differing routes are therefore treated as dynamic.
-        return count($resolved) === 1 ? $resolved[0] : '@dynamic';
+        $traitRoutes = [];
+        foreach ($this->traitsForClass($class) as $trait) {
+            $key = strtolower(ltrim($trait, '\\'));
+            if (array_key_exists($key, $this->queueRouteConnections)) {
+                $traitRoutes[] = $this->queueRouteConnections[$key];
+            }
+        }
+
+        $resolvedTraits = array_values(array_unique($traitRoutes));
+        if (count($resolvedTraits) === 1) {
+            return $resolvedTraits[0];
+        }
+        if (count($resolvedTraits) > 1) {
+            return '@dynamic';
+        }
+
+        $queue = $this->queueNameFor($class);
+        if ($queue === '@dynamic') {
+            return '@dynamic';
+        }
+
+        return $queue !== null ? ($this->queueForwards[$queue] ?? null) : null;
     }
 
     public function indexFile(string $file): void
@@ -99,17 +134,31 @@ final class ClassMetadataIndex
         $tokens = $this->tokens($source);
         $context = $this->parseContext($tokens);
         $this->contexts[$file] = $context;
-        $this->indexQueueRoutes($source, $tokens, $context);
 
+        $this->indexInterfaceDeclarations($tokens, $context);
+        $this->indexQueueRoutes($source, $tokens, $context);
+        $this->indexQueueForwards($source, $tokens, $context);
+        $this->indexClassAndTraitDeclarations($source, $tokens, $context);
+    }
+
+    /**
+     * @param  list<Token>  $tokens
+     */
+    private function indexClassAndTraitDeclarations(string $source, array $tokens, FileContext $context): void
+    {
         $count = count($tokens);
+
         for ($i = 0; $i < $count; $i++) {
-            if (($tokens[$i]['id'] ?? null) !== T_CLASS) {
+            $declarationType = $tokens[$i]['id'];
+            if (! in_array($declarationType, [T_CLASS, T_TRAIT], true)) {
                 continue;
             }
 
-            $previous = $this->previousSignificant($tokens, $i - 1);
-            if ($previous !== null && ($tokens[$previous]['id'] ?? null) === T_DOUBLE_COLON) {
-                continue;
+            if ($declarationType === T_CLASS) {
+                $previous = $this->previousSignificant($tokens, $i - 1);
+                if ($previous !== null && ($tokens[$previous]['id'] ?? null) === T_DOUBLE_COLON) {
+                    continue;
+                }
             }
 
             $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING);
@@ -117,7 +166,7 @@ final class ClassMetadataIndex
                 continue;
             }
 
-            $className = $tokens[$nameIndex]['text'];
+            $name = $tokens[$nameIndex]['text'];
             $interfaces = [];
             $parent = null;
             $openBrace = null;
@@ -137,7 +186,7 @@ final class ClassMetadataIndex
                     break;
                 }
 
-                if (($token['id'] ?? null) === T_IMPLEMENTS) {
+                if ($declarationType === T_CLASS && ($token['id'] ?? null) === T_IMPLEMENTS) {
                     if ($mode === 'extends' && trim($buffer) !== '') {
                         $parent = $this->parseSingleName($buffer, $context);
                     }
@@ -147,7 +196,7 @@ final class ClassMetadataIndex
                     continue;
                 }
 
-                if (($token['id'] ?? null) === T_EXTENDS) {
+                if ($declarationType === T_CLASS && ($token['id'] ?? null) === T_EXTENDS) {
                     if ($mode === 'implements' && trim($buffer) !== '') {
                         $interfaces = array_merge($interfaces, $this->parseNameList($buffer, $context));
                     }
@@ -171,8 +220,17 @@ final class ClassMetadataIndex
                 continue;
             }
 
-            [$afterCommit, $beforeCommit, $queueConnection] = $this->constructorCommitBehavior($tokens, $openBrace + 1, $closeBrace - 1, $source);
-            $fqcn = $context->namespace !== '' ? $context->namespace.'\\'.$className : $className;
+            $traits = $this->traitsUsed($tokens, $openBrace + 1, $closeBrace - 1, $context);
+            [$afterCommit, $beforeCommit, $constructorConnection, $constructorQueue, $constructorOverride] =
+                $this->constructorQueueBehavior($tokens, $openBrace + 1, $closeBrace - 1, $source);
+            [$propertyConnection, $propertyQueue, $propertyAfterCommit] =
+                $this->classQueueDefaults($tokens, $openBrace + 1, $closeBrace - 1, $source);
+
+            $attributeQueue = $this->queueAttributeForDeclaration($source, $tokens[$i]['offset'], $context);
+            $queueConnection = $constructorConnection ?? $propertyConnection;
+            $queueName = $constructorQueue ?? $attributeQueue ?? $propertyQueue;
+            $afterCommitOverride = $constructorOverride ?? $propertyAfterCommit;
+            $fqcn = $context->namespace !== '' ? $context->namespace.'\\'.$name : $name;
 
             $this->classes[strtolower($fqcn)] = new ClassMetadata(
                 name: $fqcn,
@@ -181,6 +239,9 @@ final class ClassMetadataIndex
                 constructorAfterCommit: $afterCommit,
                 constructorBeforeCommit: $beforeCommit,
                 constructorQueueConnection: $queueConnection,
+                traits: $traits,
+                queueName: $queueName,
+                afterCommitOverride: $afterCommitOverride,
             );
 
             $i = $closeBrace;
@@ -188,7 +249,276 @@ final class ClassMetadataIndex
     }
 
     /**
-     * @param  list<array{id:int|null,text:string,line:int,offset:int}>  $tokens
+     * @param  list<Token>  $tokens
+     */
+    private function indexInterfaceDeclarations(array $tokens, FileContext $context): void
+    {
+        $count = count($tokens);
+
+        for ($i = 0; $i < $count; $i++) {
+            if (($tokens[$i]['id'] ?? null) !== T_INTERFACE) {
+                continue;
+            }
+
+            $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING);
+            if ($nameIndex === null) {
+                continue;
+            }
+
+            $parents = [];
+            $buffer = '';
+            $collecting = false;
+
+            for ($j = $nameIndex + 1; $j < $count; $j++) {
+                if ($tokens[$j]['text'] === '{') {
+                    if ($collecting && trim($buffer) !== '') {
+                        $parents = $this->parseNameList($buffer, $context);
+                    }
+                    break;
+                }
+
+                if (($tokens[$j]['id'] ?? null) === T_EXTENDS) {
+                    $collecting = true;
+                    $buffer = '';
+
+                    continue;
+                }
+
+                if ($collecting) {
+                    $buffer .= $tokens[$j]['text'];
+                }
+            }
+
+            $name = $tokens[$nameIndex]['text'];
+            $fqcn = $context->namespace !== '' ? $context->namespace.'\\'.$name : $name;
+            $this->interfaceParents[strtolower($fqcn)] = array_values(array_unique($parents));
+        }
+    }
+
+    /**
+     * @param  list<Token>  $tokens
+     * @return list<string>
+     */
+    private function traitsUsed(array $tokens, int $start, int $end, FileContext $context): array
+    {
+        $traits = [];
+        $depth = 0;
+
+        for ($i = $start; $i <= $end; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '{') {
+                $depth++;
+                continue;
+            }
+            if ($text === '}') {
+                $depth = max(0, $depth - 1);
+                continue;
+            }
+
+            if (($tokens[$i]['id'] ?? null) !== T_USE || $depth !== 0) {
+                continue;
+            }
+
+            $clause = '';
+            for ($j = $i + 1; $j <= $end; $j++) {
+                if (in_array($tokens[$j]['text'], [';', '{'], true)) {
+                    $traits = array_merge($traits, $this->parseNameList($clause, $context));
+                    if ($tokens[$j]['text'] === '{') {
+                        $close = $this->matchingDelimiter($tokens, $j, '{', '}');
+                        $i = $close ?? $j;
+                    } else {
+                        $i = $j;
+                    }
+                    break;
+                }
+                $clause .= $tokens[$j]['text'];
+            }
+        }
+
+        return array_values(array_unique($traits));
+    }
+
+    /**
+     * @param  list<Token>  $tokens
+     * @return array{bool,bool,string|null,string|null,bool|null}
+     */
+    private function constructorQueueBehavior(array $tokens, int $start, int $end, string $source): array
+    {
+        for ($i = $start; $i <= $end; $i++) {
+            if (($tokens[$i]['id'] ?? null) !== T_FUNCTION) {
+                continue;
+            }
+
+            $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING, $end);
+            if ($nameIndex === null || strcasecmp($tokens[$nameIndex]['text'], '__construct') !== 0) {
+                continue;
+            }
+
+            $openBrace = $this->nextText($tokens, $nameIndex + 1, '{', $end);
+            if ($openBrace === null) {
+                return [false, false, null, null, null];
+            }
+
+            $closeBrace = $this->matchingBrace($tokens, $openBrace, $end);
+            if ($closeBrace === null) {
+                return [false, false, null, null, null];
+            }
+
+            $offset = $tokens[$openBrace]['offset'];
+            $length = ($tokens[$closeBrace]['offset'] + strlen($tokens[$closeBrace]['text'])) - $offset;
+            $body = substr($source, $offset, $length);
+
+            $afterMatches = $this->booleanQueuePreferenceMatches($body);
+            $afterCommit = str_contains($body, '->afterCommit(');
+            $beforeCommit = str_contains($body, '->beforeCommit(');
+            $override = $afterMatches === [] ? null : end($afterMatches)['value'];
+
+            return [
+                $afterCommit,
+                $beforeCommit,
+                $this->lastQueueStringSetting($body, 'connection', 'onConnection'),
+                $this->lastQueueStringSetting($body, 'queue', 'onQueue'),
+                $override,
+            ];
+        }
+
+        return [false, false, null, null, null];
+    }
+
+    /**
+     * @return list<array{offset:int,value:bool}>
+     */
+    private function booleanQueuePreferenceMatches(string $body): array
+    {
+        $matches = [];
+
+        foreach ([
+            '/->\s*afterCommit\s*\(/' => true,
+            '/->\s*beforeCommit\s*\(/' => false,
+        ] as $pattern => $value) {
+            if (preg_match_all($pattern, $body, $found, PREG_OFFSET_CAPTURE) > 0) {
+                foreach ($found[0] as $match) {
+                    $matches[] = ['offset' => $match[1], 'value' => $value];
+                }
+            }
+        }
+
+        if (preg_match_all('/\$this\s*->\s*afterCommit\s*=\s*(true|false)\b/i', $body, $found, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) > 0) {
+            foreach ($found as $match) {
+                $matches[] = [
+                    'offset' => $match[0][1],
+                    'value' => strtolower($match[1][0]) === 'true',
+                ];
+            }
+        }
+
+        usort($matches, static fn (array $a, array $b): int => $a['offset'] <=> $b['offset']);
+
+        return $matches;
+    }
+
+    private function lastQueueStringSetting(string $body, string $property, string $method): ?string
+    {
+        $matches = [];
+
+        if (preg_match_all('/\$this\s*->\s*'.preg_quote($method, '/').'\s*\((.*?)\)/s', $body, $found, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) > 0) {
+            foreach ($found as $match) {
+                $expression = trim($match[1][0]);
+                $matches[] = [
+                    'offset' => $match[0][1],
+                    'value' => $this->literalString($expression) ?? '@dynamic',
+                ];
+            }
+        }
+
+        if (preg_match_all('/\$this\s*->\s*'.preg_quote($property, '/').'\s*=\s*([^;]+);/s', $body, $found, PREG_SET_ORDER | PREG_OFFSET_CAPTURE) > 0) {
+            foreach ($found as $match) {
+                $expression = trim($match[1][0]);
+                $matches[] = [
+                    'offset' => $match[0][1],
+                    'value' => $this->literalString($expression) ?? '@dynamic',
+                ];
+            }
+        }
+
+        if ($matches === []) {
+            return null;
+        }
+
+        usort($matches, static fn (array $a, array $b): int => $a['offset'] <=> $b['offset']);
+
+        return end($matches)['value'];
+    }
+
+    /**
+     * @param  list<Token>  $tokens
+     * @return array{string|null,string|null,bool|null}
+     */
+    private function classQueueDefaults(array $tokens, int $start, int $end, string $source): array
+    {
+        $bodyStart = $tokens[$start]['offset'] ?? 0;
+        $bodyEnd = isset($tokens[$end]) ? $tokens[$end]['offset'] + strlen($tokens[$end]['text']) : $bodyStart;
+        $body = substr($source, $bodyStart, max(0, $bodyEnd - $bodyStart));
+
+        return [
+            $this->publicStringProperty($body, 'connection'),
+            $this->publicStringProperty($body, 'queue'),
+            $this->publicBoolProperty($body, 'afterCommit'),
+        ];
+    }
+
+    private function publicStringProperty(string $body, string $property): ?string
+    {
+        $pattern = '/\bpublic\b(?:(?![;{]).)*?\$'.preg_quote($property, '/').'\s*=\s*([^;]+);/is';
+        if (preg_match($pattern, $body, $match) !== 1) {
+            return null;
+        }
+
+        $expression = trim($match[1]);
+        if (strcasecmp($expression, 'null') === 0) {
+            return null;
+        }
+
+        return $this->literalString($expression) ?? '@dynamic';
+    }
+
+    private function publicBoolProperty(string $body, string $property): ?bool
+    {
+        $pattern = '/\bpublic\b(?:(?![;{]).)*?\$'.preg_quote($property, '/').'\s*=\s*(true|false)\s*;/is';
+        if (preg_match($pattern, $body, $match) !== 1) {
+            return null;
+        }
+
+        return strtolower($match[1]) === 'true';
+    }
+
+    private function queueAttributeForDeclaration(string $source, int $declarationOffset, FileContext $context): ?string
+    {
+        $prefixStart = max(0, $declarationOffset - 1500);
+        $prefix = substr($source, $prefixStart, $declarationOffset - $prefixStart);
+        if (preg_match('/#\[(?<attributes>[^\]]+)\]\s*(?:(?:abstract|final|readonly)\s+)*$/s', $prefix, $match) !== 1) {
+            return null;
+        }
+
+        $aliases = ['\\Illuminate\\Queue\\Attributes\\Queue'];
+        foreach ($context->imports as $alias => $import) {
+            if (strcasecmp(ltrim($import, '\\'), 'Illuminate\\Queue\\Attributes\\Queue') === 0) {
+                $aliases[] = $alias;
+            }
+        }
+
+        foreach (array_values(array_unique($aliases)) as $alias) {
+            $pattern = '/(?:^|,)\s*'.preg_quote($alias, '/').'\s*\(\s*([\'\"])(.*?)\1\s*\)/s';
+            if (preg_match($pattern, $match['attributes'], $attribute) === 1) {
+                return stripcslashes($attribute[2]);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<Token>  $tokens
      */
     private function parseContext(array $tokens): FileContext
     {
@@ -216,12 +546,11 @@ final class ClassMetadataIndex
                         $name .= $tokens[$j]['text'];
                     }
                 }
-                $namespace = trim($name, ' \\t\\n\\r\\0\\x0B\\\\');
+                $namespace = trim($name, " \t\n\r\0\x0B\\");
 
                 continue;
             }
 
-            // Standard Laravel files use semicolon namespaces, so namespace imports are at depth 0.
             if (($token['id'] ?? null) === T_USE && $braceDepth === 0) {
                 $clause = '';
                 for ($j = $i + 1; $j < $count; $j++) {
@@ -251,8 +580,7 @@ final class ClassMetadataIndex
 
         $result = [];
 
-        // Basic grouped imports: Foo\\Bar\\{Baz, Qux as Alias}
-        if (preg_match('/^(.+?)\\\\\{(.+)\}$/', $clause, $matches) === 1) {
+        if (preg_match('/^(.+?)\\\{(.+)\}$/', $clause, $matches) === 1) {
             $prefix = trim($matches[1], '\\').'\\';
             foreach (explode(',', $matches[2]) as $part) {
                 $this->appendUse($result, $prefix.trim($part));
@@ -268,7 +596,7 @@ final class ClassMetadataIndex
         return $result;
     }
 
-    /** @param array<string, string> $result */
+    /** @param  array<string, string>  $result */
     private function appendUse(array &$result, string $part): void
     {
         if ($part === '') {
@@ -309,63 +637,11 @@ final class ClassMetadataIndex
     }
 
     /**
-     * @param  list<array{id:int|null,text:string,line:int,offset:int}>  $tokens
-     * @return array{bool,bool,string|null}
+     * @param  list<Token>  $tokens
      */
-    private function constructorCommitBehavior(array $tokens, int $start, int $end, string $source): array
-    {
-        for ($i = $start; $i <= $end; $i++) {
-            if (($tokens[$i]['id'] ?? null) !== T_FUNCTION) {
-                continue;
-            }
-
-            $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING, $end);
-            if ($nameIndex === null || strcasecmp($tokens[$nameIndex]['text'], '__construct') !== 0) {
-                continue;
-            }
-
-            $openBrace = $this->nextText($tokens, $nameIndex + 1, '{', $end);
-            if ($openBrace === null) {
-                return [false, false, null];
-            }
-
-            $closeBrace = $this->matchingBrace($tokens, $openBrace, $end);
-            if ($closeBrace === null) {
-                return [false, false, null];
-            }
-
-            $offset = $tokens[$openBrace]['offset'];
-            $length = ($tokens[$closeBrace]['offset'] + strlen($tokens[$closeBrace]['text'])) - $offset;
-            $body = substr($source, $offset, $length);
-
-            $connection = null;
-            if (preg_match('/\$this\s*->\s*onConnection\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $body, $match) === 1) {
-                $connection = $match[1];
-            } elseif (preg_match('/\$this\s*->\s*onConnection\s*\(/', $body) === 1) {
-                $connection = '@dynamic';
-            }
-
-            return [
-                preg_match('/\$this\s*->\s*afterCommit\s*\(/', $body) === 1,
-                preg_match('/\$this\s*->\s*beforeCommit\s*\(/', $body) === 1,
-                $connection,
-            ];
-        }
-
-        return [false, false, null];
-    }
-
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
     private function indexQueueRoutes(string $source, array $tokens, FileContext $context): void
     {
-        $aliases = ['Queue'];
-        foreach ($context->imports as $alias => $import) {
-            if (strcasecmp(ltrim($import, '\\'), 'Illuminate\\Support\\Facades\\Queue') === 0) {
-                $aliases[] = $alias;
-            }
-        }
-
-        foreach (array_values(array_unique($aliases)) as $alias) {
+        foreach ($this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
             $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*route\s*\(/i';
             $ok = preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE);
             if ($ok === false || $ok === 0) {
@@ -400,27 +676,35 @@ final class ClassMetadataIndex
         }
 
         if (str_starts_with($arguments, '[')) {
-            if (preg_match_all('/(?P<class>\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class\s*=>\s*(?P<value>\[[^\]]*\]|[\'\"][^\'\"]*[\'\"])/s', $arguments, $entries, PREG_SET_ORDER) === false) {
+            if (preg_match_all('/(?P<class>\\?[A-Za-z_][A-Za-z0-9_\\]*)\s*::\s*class\s*=>\s*(?P<value>\[[^\]]*\]|[\'\"][^\'\"]*[\'\"])/s', $arguments, $entries, PREG_SET_ORDER) === false) {
                 return;
             }
+
             foreach ($entries as $entry) {
                 $target = $context->resolve($entry['class']);
                 $value = trim($entry['value']);
                 if (! str_starts_with($value, '[')) {
-                    continue; // queue-only route, default connection remains unchanged
+                    continue;
                 }
-                // Laravel 13's published queue-routing documentation and the current
-                // framework implementation disagree on the positional order of route
-                // array values. A safety analyzer must not guess across that unstable
-                // contract, so array routes with two values are treated as dynamic.
-                $this->queueRouteConnections[strtolower(ltrim($target, '\\'))] = '@dynamic';
+
+                $parts = $this->splitTopLevelArguments(substr($value, 1, -1));
+                if ($parts === []) {
+                    continue;
+                }
+                $connectionExpression = trim($parts[0]);
+                if (strcasecmp($connectionExpression, 'null') === 0) {
+                    continue;
+                }
+
+                $this->queueRouteConnections[strtolower(ltrim($target, '\\'))] =
+                    $this->literalString($connectionExpression) ?? '@dynamic';
             }
 
             return;
         }
 
         $parts = $this->splitTopLevelArguments($arguments);
-        if ($parts === [] || preg_match('/^\s*(\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class\s*$/', $parts[0], $match) !== 1) {
+        if ($parts === [] || preg_match('/^\s*(\\?[A-Za-z_][A-Za-z0-9_\\]*)\s*::\s*class\s*$/', $parts[0], $match) !== 1) {
             return;
         }
 
@@ -454,6 +738,102 @@ final class ClassMetadataIndex
         }
     }
 
+    /**
+     * @param  list<Token>  $tokens
+     */
+    private function indexQueueForwards(string $source, array $tokens, FileContext $context): void
+    {
+        foreach ($this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
+            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*forward\s*\(/i';
+            $ok = preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE);
+            if ($ok === false || $ok === 0) {
+                continue;
+            }
+
+            foreach ($matches[0] as [$matched, $offset]) {
+                if ($this->offsetIsNonCode($tokens, $offset)) {
+                    continue;
+                }
+                $open = $this->tokenIndexAtOrAfterOffset($tokens, $offset + strlen($matched) - 1, '(');
+                if ($open === null) {
+                    continue;
+                }
+                $close = $this->matchingDelimiter($tokens, $open, '(', ')');
+                if ($close === null) {
+                    continue;
+                }
+                $argsStart = $tokens[$open]['offset'] + 1;
+                $arguments = substr($source, $argsStart, max(0, $tokens[$close]['offset'] - $argsStart));
+                $this->parseQueueForwardArguments($arguments);
+            }
+        }
+    }
+
+    private function parseQueueForwardArguments(string $arguments): void
+    {
+        $parts = $this->splitTopLevelArguments($arguments);
+        if ($parts === []) {
+            return;
+        }
+
+        $connection = null;
+        foreach (array_slice($parts, 1) as $part) {
+            if (preg_match('/^\s*connection\s*:\s*(.+)$/is', $part, $named) === 1) {
+                $value = trim($named[1]);
+                if (strcasecmp($value, 'null') !== 0) {
+                    $connection = $this->literalString($value) ?? '@dynamic';
+                }
+                break;
+            }
+        }
+
+        if ($connection === null && isset($parts[2])) {
+            $value = trim($parts[2]);
+            if (strcasecmp($value, 'null') !== 0) {
+                $connection = $this->literalString($value) ?? '@dynamic';
+            }
+        }
+
+        if ($connection === null) {
+            return;
+        }
+
+        $first = trim($parts[0]);
+        if (str_starts_with($first, '[')) {
+            if (preg_match_all('/([\'\"])(.*?)\1\s*=>/s', $first, $entries, PREG_SET_ORDER) > 0) {
+                foreach ($entries as $entry) {
+                    $this->queueForwards[stripcslashes($entry[2])] = $connection;
+                }
+            }
+
+            return;
+        }
+
+        $queue = $this->literalString($first);
+        if ($queue !== null) {
+            $this->queueForwards[$queue] = $connection;
+        }
+    }
+
+    /** @return list<string> */
+    private function facadeAliases(FileContext $context, string $fqcn, string $fallback): array
+    {
+        $normalized = ltrim($fqcn, '\\');
+        $aliases = ['\\'.$normalized];
+        $fallbackImport = $context->imports[$fallback] ?? null;
+        if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
+            $aliases[] = $fallback;
+        }
+
+        foreach ($context->imports as $alias => $import) {
+            if (strcasecmp(ltrim($import, '\\'), $normalized) === 0) {
+                $aliases[] = $alias;
+            }
+        }
+
+        return array_values(array_unique($aliases));
+    }
+
     /** @return list<string> */
     private function splitTopLevelArguments(string $source): array
     {
@@ -469,23 +849,19 @@ final class ClassMetadataIndex
             if ($quote !== null) {
                 if ($escaped) {
                     $escaped = false;
-
                     continue;
                 }
                 if ($char === '\\') {
                     $escaped = true;
-
                     continue;
                 }
                 if ($char === $quote) {
                     $quote = null;
                 }
-
                 continue;
             }
             if ($char === '\'' || $char === '"') {
                 $quote = $char;
-
                 continue;
             }
             if ($char === '(') {
@@ -514,14 +890,146 @@ final class ClassMetadataIndex
     private function literalString(string $expression): ?string
     {
         $expression = trim($expression);
-        if (preg_match('/^([\'\"])(.*)\\1$/s', $expression, $match) !== 1) {
+        if (preg_match('/^([\'\"])(.*)\1$/s', $expression, $match) !== 1) {
             return null;
         }
 
         return stripcslashes($match[2]);
     }
 
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
+    private function resolveInheritedInterfaces(): void
+    {
+        foreach (array_keys($this->classes) as $key) {
+            $interfaces = $this->inheritedInterfacesForClass($key, []);
+            $metadata = $this->classes[$key];
+
+            $this->classes[$key] = new ClassMetadata(
+                name: $metadata->name,
+                interfaces: $interfaces,
+                parent: $metadata->parent,
+                constructorAfterCommit: $metadata->constructorAfterCommit,
+                constructorBeforeCommit: $metadata->constructorBeforeCommit,
+                constructorQueueConnection: $metadata->constructorQueueConnection,
+                traits: $metadata->traits,
+                queueName: $metadata->queueName,
+                afterCommitOverride: $metadata->afterCommitOverride,
+            );
+        }
+    }
+
+    /**
+     * @param  array<string, true>  $seen
+     * @return list<string>
+     */
+    private function inheritedInterfacesForClass(string $key, array $seen): array
+    {
+        if (isset($seen[$key]) || ! isset($this->classes[$key])) {
+            return [];
+        }
+        $seen[$key] = true;
+        $metadata = $this->classes[$key];
+        $interfaces = [];
+
+        foreach ($metadata->interfaces as $interface) {
+            $interfaces = array_merge($interfaces, $this->expandedInterface($interface, []));
+        }
+
+        if ($metadata->parent !== null) {
+            $parentKey = strtolower(ltrim($metadata->parent, '\\'));
+            $interfaces = array_merge($interfaces, $this->inheritedInterfacesForClass($parentKey, $seen));
+        }
+
+        return array_values(array_unique($interfaces));
+    }
+
+    /**
+     * @param  array<string, true>  $seen
+     * @return list<string>
+     */
+    private function expandedInterface(string $interface, array $seen): array
+    {
+        $key = strtolower(ltrim($interface, '\\'));
+        if (isset($seen[$key])) {
+            return [];
+        }
+        $seen[$key] = true;
+        $interfaces = [$interface];
+
+        foreach ($this->interfaceParents[$key] ?? [] as $parent) {
+            $interfaces = array_merge($interfaces, $this->expandedInterface($parent, $seen));
+        }
+
+        return array_values(array_unique($interfaces));
+    }
+
+    /** @return list<string> */
+    private function traitsForClass(string $class): array
+    {
+        return $this->inheritedTraitsFor(strtolower(ltrim($class, '\\')), []);
+    }
+
+    /**
+     * @param  array<string, true>  $seen
+     * @return list<string>
+     */
+    private function inheritedTraitsFor(string $key, array $seen): array
+    {
+        if (isset($seen[$key]) || ! isset($this->classes[$key])) {
+            return [];
+        }
+        $seen[$key] = true;
+        $metadata = $this->classes[$key];
+        $traits = [];
+
+        foreach ($metadata->traits as $trait) {
+            $traits[] = $trait;
+            $traits = array_merge($traits, $this->inheritedTraitsFor(strtolower(ltrim($trait, '\\')), $seen));
+        }
+
+        if ($metadata->parent !== null) {
+            $traits = array_merge($traits, $this->inheritedTraitsFor(strtolower(ltrim($metadata->parent, '\\')), $seen));
+        }
+
+        return array_values(array_unique($traits));
+    }
+
+    private function queueNameFor(string $class, array $seen = []): ?string
+    {
+        $key = strtolower(ltrim($class, '\\'));
+        if (isset($seen[$key])) {
+            return null;
+        }
+        $seen[$key] = true;
+        $metadata = $this->classes[$key] ?? null;
+        if ($metadata === null) {
+            return null;
+        }
+
+        if ($metadata->queueName !== null) {
+            return $metadata->queueName;
+        }
+
+        $traitQueues = [];
+        foreach ($metadata->traits as $trait) {
+            $queue = $this->queueNameFor($trait, $seen);
+            if ($queue !== null) {
+                $traitQueues[] = $queue;
+            }
+        }
+        $traitQueues = array_values(array_unique($traitQueues));
+        if (count($traitQueues) === 1) {
+            return $traitQueues[0];
+        }
+        if (count($traitQueues) > 1) {
+            return '@dynamic';
+        }
+
+        return $metadata->parent !== null ? $this->queueNameFor($metadata->parent, $seen) : null;
+    }
+
+    /**
+     * @param  list<Token>  $tokens
+     */
     private function offsetIsNonCode(array $tokens, int $offset): bool
     {
         foreach ($tokens as $token) {
@@ -537,7 +1045,9 @@ final class ClassMetadataIndex
         return false;
     }
 
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
+    /**
+     * @param  list<Token>  $tokens
+     */
     private function tokenIndexAtOrAfterOffset(array $tokens, int $offset, string $text): ?int
     {
         foreach ($tokens as $index => $token) {
@@ -552,7 +1062,9 @@ final class ClassMetadataIndex
         return null;
     }
 
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
+    /**
+     * @param  list<Token>  $tokens
+     */
     private function matchingDelimiter(array $tokens, int $open, string $openText, string $closeText): ?int
     {
         $depth = 0;
@@ -571,42 +1083,7 @@ final class ClassMetadataIndex
         return null;
     }
 
-    private function resolveInheritedInterfaces(): void
-    {
-        foreach (array_keys($this->classes) as $key) {
-            $interfaces = $this->inheritedInterfacesFor($key, []);
-            $metadata = $this->classes[$key];
-
-            $this->classes[$key] = new ClassMetadata(
-                name: $metadata->name,
-                interfaces: $interfaces,
-                parent: $metadata->parent,
-                constructorAfterCommit: $metadata->constructorAfterCommit,
-                constructorBeforeCommit: $metadata->constructorBeforeCommit,
-                constructorQueueConnection: $metadata->constructorQueueConnection,
-            );
-        }
-    }
-
-    /** @param array<string, true> $seen @return list<string> */
-    private function inheritedInterfacesFor(string $key, array $seen): array
-    {
-        if (isset($seen[$key]) || ! isset($this->classes[$key])) {
-            return [];
-        }
-        $seen[$key] = true;
-        $metadata = $this->classes[$key];
-        $interfaces = $metadata->interfaces;
-
-        if ($metadata->parent !== null) {
-            $parentKey = strtolower(ltrim($metadata->parent, '\\'));
-            $interfaces = array_merge($interfaces, $this->inheritedInterfacesFor($parentKey, $seen));
-        }
-
-        return array_values(array_unique($interfaces));
-    }
-
-    /** @return list<array{id:int|null,text:string,line:int,offset:int}> */
+    /** @return list<Token> */
     private function tokens(string $source): array
     {
         $raw = token_get_all($source);
@@ -641,7 +1118,9 @@ final class ClassMetadataIndex
         ]), true);
     }
 
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
+    /**
+     * @param  list<Token>  $tokens
+     */
     private function previousSignificant(array $tokens, int $index): ?int
     {
         for ($i = $index; $i >= 0; $i--) {
@@ -653,7 +1132,9 @@ final class ClassMetadataIndex
         return null;
     }
 
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
+    /**
+     * @param  list<Token>  $tokens
+     */
     private function nextTokenOfType(array $tokens, int $start, int $type, ?int $end = null): ?int
     {
         $end ??= count($tokens) - 1;
@@ -672,7 +1153,9 @@ final class ClassMetadataIndex
         return null;
     }
 
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
+    /**
+     * @param  list<Token>  $tokens
+     */
     private function nextText(array $tokens, int $start, string $text, ?int $end = null): ?int
     {
         $end ??= count($tokens) - 1;
@@ -685,7 +1168,9 @@ final class ClassMetadataIndex
         return null;
     }
 
-    /** @param list<array{id:int|null,text:string,line:int,offset:int}> $tokens */
+    /**
+     * @param  list<Token>  $tokens
+     */
     private function matchingBrace(array $tokens, int $open, ?int $limit = null): ?int
     {
         $depth = 0;
