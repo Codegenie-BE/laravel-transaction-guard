@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
   group: cleanup-merged-branches
@@ -14,9 +15,12 @@ concurrency:
 
 jobs:
   cleanup:
-    name: Delete fully merged branches
+    name: Delete merged branches
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY_OWNER: ${{ github.repository_owner }}
 
     steps:
       - name: Checkout main
@@ -24,7 +28,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Delete fully merged non-main branches
+      - name: Delete merged non-main branches
         shell: bash
         run: |
           git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
@@ -36,9 +40,25 @@ jobs:
                 fi
 
                 branch_sha="$(git rev-parse "refs/remotes/origin/${branch}")"
+                merged=false
 
                 if git merge-base --is-ancestor "${branch_sha}" origin/main; then
-                  echo "Deleting fully merged branch ${branch} at ${branch_sha}."
+                  merged=true
+                else
+                  merged_prs="$(gh pr list \
+                    --state merged \
+                    --base main \
+                    --head "${branch}" \
+                    --json number,headRepositoryOwner \
+                    --jq "[.[] | select(.headRepositoryOwner.login == \"${REPOSITORY_OWNER}\")] | length")"
+
+                  if [ "${merged_prs}" -gt 0 ]; then
+                    merged=true
+                  fi
+                fi
+
+                if [ "${merged}" = "true" ]; then
+                  echo "Deleting merged branch ${branch} at ${branch_sha}."
 
                   if ! git push \
                     --force-with-lease="refs/heads/${branch}:${branch_sha}" \

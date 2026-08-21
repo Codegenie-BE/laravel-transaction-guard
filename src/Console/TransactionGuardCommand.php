@@ -25,7 +25,8 @@ final class TransactionGuardCommand extends Command
 
     public function handle(): int
     {
-        $format = strtolower((string) $this->option('format'));
+        $formatOption = $this->option('format');
+        $format = is_string($formatOption) ? strtolower($formatOption) : 'console';
         if (! in_array($format, ['console', 'json', 'github'], true)) {
             $this->error('Invalid --format. Use console, json, or github.');
 

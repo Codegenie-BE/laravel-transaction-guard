@@ -27,7 +27,7 @@ final readonly class Finding
 
         $file = str_replace('\\', '/', $this->file);
         $cwd = getcwd();
-        if (is_string($cwd) && $cwd !== '') {
+        if ($cwd !== false) {
             $cwd = rtrim(str_replace('\\', '/', realpath($cwd) ?: $cwd), '/').'/';
             if (str_starts_with($file, $cwd)) {
                 $file = substr($file, strlen($cwd));
