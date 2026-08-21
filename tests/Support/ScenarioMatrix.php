@@ -1610,6 +1610,89 @@ PHP,
 <?php
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::dispatch((new \App\Jobs\ProcessOrder())->afterCommit()); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'Queue push honors ShouldQueueAfterCommit job contract' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueueAfterCommit {}
+DB::transaction(function () { Queue::push(new ProcessOrder()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false]],
+    ],
+    'Queue push honors explicit job afterCommit preference' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { Queue::push((new ProcessOrder())->afterCommit()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false]],
+    ],
+    'Queue push explicit afterCommit false overrides safe queue config' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueue { public bool $afterCommit = false; }
+DB::transaction(function () { Queue::push(new ProcessOrder()); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'direct broadcast explicit afterCommit false overrides queue after_commit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Support\Facades\DB;
+class OrderUpdated implements ShouldBroadcast { public bool $afterCommit = false; }
+DB::transaction(function () { broadcast(new OrderUpdated()); });
+PHP,
+        'rules' => ['TG005'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+
+    'Bus chain creation without dispatch has no side effect' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::chain([new \App\Jobs\A(), new \App\Jobs\B()]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'Bus batch creation without dispatch has no side effect' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::batch([new \App\Jobs\A()]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'Bus invalid post-dispatch afterCommit chain is not accepted as safety proof' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
 DB::transaction(function () { Bus::dispatch(new \App\Jobs\ProcessOrder())->afterCommit(); });
 PHP,
         'rules' => ['TG001'],
