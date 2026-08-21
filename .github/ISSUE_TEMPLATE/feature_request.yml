@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a new Laravel transaction-safety rule or analyzer capability.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the concrete transaction-safety failure this would prevent.
+    validations:
+      required: true
+  - type: textarea
+    id: unsafe
+    attributes:
+      label: Unsafe example
+      render: php
+    validations:
+      required: true
+  - type: textarea
+    id: safe
+    attributes:
+      label: Safe alternative
+      render: php
+    validations:
+      required: true
+  - type: textarea
+    id: falsepositives
+    attributes:
+      label: False-positive considerations
+      description: Explain cases the analyzer should not report.
