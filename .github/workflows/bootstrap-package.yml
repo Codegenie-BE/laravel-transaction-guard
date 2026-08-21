@@ -3,6 +3,7 @@ name: Bootstrap package
 on:
   push:
     branches:
+      - main
       - feature/full-package
   pull_request:
     branches:
@@ -47,10 +48,12 @@ jobs:
 
       - name: Commit package
         shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           rm -rf .bootstrap .github/workflows/bootstrap-package.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "feat: add Laravel Transaction Guard"
-          git push origin HEAD:${{ github.head_ref || 'feature/full-package' }}
+          git push origin "HEAD:${TARGET_BRANCH}"
