@@ -1,0 +1,218 @@
+name: Temporary release readiness bot
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.issue.title == 'Transaction Guard release readiness trigger'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout release-readiness branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix/release-readiness
+          fetch-depth: 0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: xdebug
+          tools: composer:v2
+
+      - name: Apply release-quality fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f'Expected fragment not found in {path}: {old[:100]!r}')
+              file.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'src/Analysis/ClassMetadataIndex.php',
+              '    /** @param array<string, true> $seen @return list<string> */\n    private function inheritedInterfacesFor(string $key, array $seen): array\n',
+              '    /**\n     * @param  array<string, true>  $seen\n     * @return list<string>\n     */\n    private function inheritedInterfacesFor(string $key, array $seen): array\n',
+          )
+
+          replace_once(
+              'src/Analysis/Finding.php',
+              "        if (is_string($cwd) && $cwd !== '') {\n",
+              "        if ($cwd !== false) {\n",
+          )
+
+          replace_once(
+              'src/Analysis/SourceScanner.php',
+              '|| $metadata?->queueAfterCommit() === true ||',
+              '|| $metadata->queueAfterCommit() === true ||',
+          )
+
+          replace_once(
+              'src/Analysis/SourceScanner.php',
+              '''        $flush = function () use (&$regions, &$groupStart, &$groupEnd, &$depth): void {
+            if ($groupStart === null) {
+                return;
+            }
+
+            $end = $groupEnd ?? strlen($this->source);
+            $regions[] = [
+                'start' => $groupStart['end'],
+                'end' => $end,
+                'line' => $this->lineAtOffset($groupStart['offset']),
+                'type' => 'manual',
+                'attempts' => 1,
+                'callableStart' => $groupStart['end'],
+                'callableEnd' => $end,
+            ];
+
+            $groupStart = null;
+            $groupEnd = null;
+            $depth = 0;
+        };
+''',
+              '''        /** @param array{type:string,offset:int,end:int,scope:string}|null $start */
+        $flush = function (?array $start, ?int $endOffset) use (&$regions): void {
+            if ($start === null) {
+                return;
+            }
+
+            $end = $endOffset ?? strlen($this->source);
+            $regions[] = [
+                'start' => $start['end'],
+                'end' => $end,
+                'line' => $this->lineAtOffset($start['offset']),
+                'type' => 'manual',
+                'attempts' => 1,
+                'callableStart' => $start['end'],
+                'callableEnd' => $end,
+            ];
+        };
+''',
+          )
+
+          replace_once(
+              'src/Analysis/SourceScanner.php',
+              '''            if ($groupStart !== null && $call['scope'] !== $groupStart['scope']) {
+                $flush();
+            }
+''',
+              '''            if ($groupStart !== null && $call['scope'] !== $groupStart['scope']) {
+                $flush($groupStart, $groupEnd);
+                $groupStart = null;
+                $groupEnd = null;
+                $depth = 0;
+            }
+''',
+          )
+
+          replace_once(
+              'src/Analysis/SourceScanner.php',
+              '''                if ($groupStart !== null && $depth === 0) {
+                    $flush();
+                }
+''',
+              '''                if ($groupStart !== null && $depth === 0) {
+                    $flush($groupStart, $groupEnd);
+                    $groupStart = null;
+                    $groupEnd = null;
+                    $depth = 0;
+                }
+''',
+          )
+
+          replace_once(
+              'src/Analysis/SourceScanner.php',
+              '        $flush();\n\n        return $regions;\n',
+              '        $flush($groupStart, $groupEnd);\n\n        return $regions;\n',
+          )
+
+          replace_once(
+              'src/Analysis/SourceScanner.php',
+              '    /** @param list<Finding> $findings */\n    private function appendFinding(\n',
+              '    /**\n     * @param  list<Finding>  $findings\n     * @param  array<string, scalar|null>  $context\n     */\n    private function appendFinding(\n',
+          )
+
+          replace_once(
+              'src/Analysis/SourceScanner.php',
+              '    /** @param list<Finding> $findings @param array{attempts:int,type:string} $tx */\n    private function appendRetryFinding(',
+              '    /**\n     * @param  list<Finding>  $findings\n     * @param  array{attempts:int,type:string}  $tx\n     */\n    private function appendRetryFinding(',
+          )
+
+          replace_once(
+              'src/Console/TransactionGuardCommand.php',
+              "        $format = strtolower((string) $this->option('format'));\n",
+              "        $formatOption = $this->option('format');\n        $format = is_string($formatOption) ? strtolower($formatOption) : 'console';\n",
+          )
+
+          replace_once(
+              'src/Analysis/AnalysisConfig.php',
+              '''        foreach ($this->customSideEffectPatterns as $pattern) {
+            if (@preg_match($pattern, '') === false) {
+                throw new \\InvalidArgumentException("Invalid custom side-effect regular expression [{$pattern}].");
+            }
+        }
+''',
+              '''        foreach ($this->customSideEffectPatterns as $pattern) {
+            set_error_handler(static fn (): bool => true);
+            try {
+                $valid = preg_match($pattern, '') !== false;
+            } finally {
+                restore_error_handler();
+            }
+
+            if (! $valid) {
+                throw new \\InvalidArgumentException("Invalid custom side-effect regular expression [{$pattern}].");
+            }
+        }
+''',
+          )
+          PY
+
+          rm -f .github/workflows/release-readiness-fix.yml
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Apply Pint
+        run: composer format
+
+      - name: Run PHPStan
+        run: composer analyse
+
+      - name: Run smoke regression matrix
+        run: composer test:smoke
+
+      - name: Run Pest suite
+        run: composer test
+
+      - name: Enforce coverage baseline
+        run: composer test:coverage
+
+      - name: Commit validated fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- src/Analysis/ClassMetadataIndex.php src/Analysis/Finding.php src/Analysis/SourceScanner.php src/Analysis/AnalysisConfig.php src/Console/TransactionGuardCommand.php
+          if [ -e .github/workflows/release-readiness-fix.yml ]; then
+            git add -- .github/workflows/release-readiness-fix.yml
+          else
+            git add -u -- .github/workflows/release-readiness-fix.yml
+          fi
+          if git diff --cached --quiet; then
+            echo 'No validated changes to commit.'
+            exit 0
+          fi
+          git commit -m 'fix: satisfy release quality gates'
+          git push origin HEAD:fix/release-readiness
