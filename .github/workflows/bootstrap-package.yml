@@ -3,7 +3,6 @@ name: Bootstrap package
 on:
   push:
     branches:
-      - main
       - feature/full-package
   pull_request:
     branches:
@@ -46,14 +45,17 @@ jobs:
           find src config tests tools -type f -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
           composer validate --strict --no-check-lock
 
-      - name: Commit package
+      - name: Commit source without workflow mutations
         shell: bash
         env:
           TARGET_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          rm -rf .bootstrap .github/workflows/bootstrap-package.yml
+          cp .github/workflows/bootstrap-package.yml /tmp/bootstrap-package.yml
+          rm -rf .bootstrap .github/workflows
+          mkdir -p .github/workflows
+          cp /tmp/bootstrap-package.yml .github/workflows/bootstrap-package.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "feat: add Laravel Transaction Guard"
+          git commit -m "feat: add Laravel Transaction Guard source"
           git push origin "HEAD:${TARGET_BRANCH}"
