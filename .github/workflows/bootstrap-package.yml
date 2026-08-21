@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feature/full-package
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -19,6 +22,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
@@ -49,4 +53,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "feat: add Laravel Transaction Guard"
-          git push origin HEAD:feature/full-package
+          git push origin HEAD:${{ github.head_ref || 'feature/full-package' }}
