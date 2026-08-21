@@ -36,7 +36,7 @@ Notifications may be synchronous or queued. A synchronous channel escapes rollba
 
 ## TG005 — broadcast before commit
 
-Queued broadcasts can race the commit. `ShouldBroadcastNow` is synchronous and therefore remains unsafe even when the default queue connection is configured with `after_commit => true`.
+Queued broadcasts can race the commit. `ShouldBroadcastNow` is synchronous and therefore remains unsafe even when the default queue connection is configured with `after_commit => true`. A direct `broadcast(...)` / `Event::broadcast()` call does not become commit-safe merely because the event implements `ShouldDispatchAfterCommit`; Laravel's broadcast manager queues a `BroadcastEvent` directly. An explicit event `afterCommit` value or a queue connection with `after_commit => true` is recognized.
 
 ## TG006 — outbound HTTP inside transaction
 
@@ -99,3 +99,10 @@ Use custom patterns for domain integrations Transaction Guard cannot infer safel
 Direct Redis writes, publishes, pipelines and Redis transactions are not part of the SQL database transaction. A later SQL rollback cannot undo Redis state, and Laravel deadlock retries may execute the Redis mutation more than once.
 
 Move the mutation to `DB::afterCommit()`, perform it after `DB::transaction(...)`, or use an idempotent/outbox strategy when cross-system delivery matters. Read-only Redis commands are intentionally ignored.
+
+
+## TG021 — database write on another connection
+
+Laravel database transactions are connection-scoped. Transaction Guard reports statically known writes that use a different database connection from the surrounding `DB::transaction()` / manual transaction. A rollback on one connection cannot roll back the other connection.
+
+Dynamic connection expressions are intentionally not guessed. When a multi-database workflow is intentional, coordinate it explicitly (for example with an outbox/saga/compensation strategy) rather than assuming cross-connection atomicity.

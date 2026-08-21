@@ -6,7 +6,10 @@ namespace Codegenie\TransactionGuard\Analysis;
 
 final readonly class ClassMetadata
 {
-    /** @param list<string> $interfaces */
+    /**
+     * @param  list<string>  $interfaces
+     * @param  list<string>  $traits
+     */
     public function __construct(
         public string $name,
         public array $interfaces,
@@ -14,6 +17,9 @@ final readonly class ClassMetadata
         public bool $constructorAfterCommit = false,
         public bool $constructorBeforeCommit = false,
         public ?string $constructorQueueConnection = null,
+        public array $traits = [],
+        public ?string $queueName = null,
+        public ?bool $afterCommitOverride = null,
     ) {}
 
     public function implements(string $interface): bool
@@ -35,9 +41,27 @@ final readonly class ClassMetadata
             || $this->implements('Illuminate\\Contracts\\Queue\\ShouldQueueAfterCommit');
     }
 
+    public function explicitlyBeforeCommit(): bool
+    {
+        if ($this->afterCommitOverride !== null) {
+            return $this->afterCommitOverride === false;
+        }
+
+        return $this->constructorBeforeCommit;
+    }
+
     public function queueAfterCommit(): bool
     {
-        return $this->implements('Illuminate\\Contracts\\Queue\\ShouldQueueAfterCommit') || $this->constructorAfterCommit;
+        if ($this->afterCommitOverride !== null) {
+            return $this->afterCommitOverride;
+        }
+
+        if ($this->constructorBeforeCommit) {
+            return false;
+        }
+
+        return $this->constructorAfterCommit
+            || $this->implements('Illuminate\\Contracts\\Queue\\ShouldQueueAfterCommit');
     }
 
     public function eventAfterCommit(): bool

@@ -10,7 +10,8 @@ The initial release matrix covers more than one hundred transaction-safety scena
 - arrow functions;
 - `DB::connection(...)->transaction()`;
 - facade aliases;
-- manual begin/commit/rollback;
+- manual begin/commit/rollback, balanced per database connection;
+- statically known cross-connection writes (`TG021`);
 - try/catch rollback paths;
 - nested transactions;
 - immediately invoked closures;
@@ -36,8 +37,10 @@ The initial release matrix covers more than one hundred transaction-safety scena
 - direct Queue push/later variants;
 - Laravel 13 `Queue::route()` exact class routes;
 - parent/interface routes;
-- route array syntax is treated conservatively when a safe connection cannot be proven;
-- explicit connection precedence over route configuration.
+- current Laravel 13 route-array connection-first runtime semantics;
+- parent/interface and recursive trait routes;
+- `Queue::forward()` with queue attributes / constructor queue names;
+- queued closures, pending chains, raw queue pushes and explicit connection precedence over route configuration.
 
 ## Events, mail, notifications, broadcasts
 
@@ -53,9 +56,10 @@ The initial release matrix covers more than one hundred transaction-safety scena
 
 - mutating HTTP methods;
 - optional strict read-only HTTP detection;
-- Laravel filesystem mutations;
+- pooled/batched HTTP work;
+- Laravel filesystem mutations including streams/directory operations;
 - native filesystem mutations;
-- cache writes/invalidation;
+- modern cache writes/invalidation (`putMany`, `remember*`, `flexible`, etc.);
 - Redis mutations, commands, increments, publishes, pipelines/transactions;
 - Redis read-only calls that should remain clean;
 - external processes/shell execution;

@@ -48,6 +48,7 @@ final class TransactionGuardCommand extends Command
                 customSideEffectPatterns: array_values(array_filter((array) config('transaction-guard.custom_side_effect_patterns', []), 'is_string')),
                 disabledRules: array_values(array_filter((array) config('transaction-guard.disabled_rules', []), 'is_string')),
                 detectReadHttpCalls: (bool) config('transaction-guard.detect_read_http_calls', false),
+                defaultDatabaseConnection: (string) config('database.default', '@default'),
             );
 
             $guard = new TransactionGuard($analysisConfig);

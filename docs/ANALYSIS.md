@@ -95,3 +95,12 @@ Transaction Guard itself:
 - fails conservatively when queue routing/connection selection cannot be proven.
 
 This makes the package suitable for local development and CI without becoming a production runtime dependency.
+
+
+## v0.2 analyzer hardening
+
+The analyzer hot path now pre-indexes source lines and non-code token ranges, caches statement/facade lookups, uses binary-search token/line lookup, and avoids temporary filter/sort allocations when selecting transaction/callable regions. Directory discovery prunes excluded directories before descending into them.
+
+Laravel 13 queue metadata follows the runtime resolver more closely: exact classes, parents, expanded interfaces, recursive traits, route arrays, queue forwarding and `#[Queue]`/constructor queue names are modeled when statically resolvable. Raw queue pushes are treated separately because driver `pushRaw()` paths bypass Laravel's job-aware `enqueueUsing()` after-commit decision.
+
+Manual transaction state carries its database connection. This both prevents a commit on one connection from lexically closing a transaction opened on another and enables high-confidence `TG021` cross-connection write findings.
