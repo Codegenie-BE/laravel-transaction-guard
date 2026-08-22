@@ -76,6 +76,9 @@ final class Baseline
 
         $fingerprints = [];
         foreach ($findings as $finding) {
+            if (RuleCatalog::isDiagnostic($finding->rule)) {
+                continue;
+            }
             $fingerprint = $finding->fingerprint();
             $fingerprints[$fingerprint] = ($fingerprints[$fingerprint] ?? 0) + 1;
         }
@@ -83,7 +86,6 @@ final class Baseline
 
         $payload = [
             'version' => 2,
-            'generated_at' => gmdate(DATE_ATOM),
             'fingerprints' => $fingerprints,
         ];
 

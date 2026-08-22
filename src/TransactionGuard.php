@@ -9,6 +9,7 @@ use Codegenie\TransactionGuard\Analysis\AnalysisResult;
 use Codegenie\TransactionGuard\Analysis\Baseline;
 use Codegenie\TransactionGuard\Analysis\ClassMetadataIndex;
 use Codegenie\TransactionGuard\Analysis\Finding;
+use Codegenie\TransactionGuard\Analysis\RuleCatalog;
 use Codegenie\TransactionGuard\Analysis\SourceScanner;
 use RecursiveCallbackFilterIterator;
 use RecursiveDirectoryIterator;
@@ -26,13 +27,22 @@ final class TransactionGuard
     public function analyze(array $paths, array $excludePatterns = [], ?Baseline $baseline = null): AnalysisResult
     {
         $files = $this->discoverPhpFiles($paths, $excludePatterns);
+        if ($files === [] && ! $this->config->allowEmptyScan) {
+            throw new \InvalidArgumentException('Transaction Guard did not discover any PHP files to analyze.');
+        }
         $index = ClassMetadataIndex::fromFiles($files);
         $scanner = new SourceScanner($index, $this->config);
         $findings = [];
+        $diagnostics = [];
         $baselineOccurrences = [];
 
         foreach ($files as $file) {
             foreach ($scanner->scan($file) as $finding) {
+                if (RuleCatalog::isDiagnostic($finding->rule)) {
+                    $diagnostics[] = $finding;
+
+                    continue;
+                }
                 if ($baseline !== null) {
                     $fingerprint = $finding->fingerprint();
                     $occurrence = ($baselineOccurrences[$fingerprint] ?? 0) + 1;
@@ -49,7 +59,9 @@ final class TransactionGuard
 
         usort($findings, static fn (Finding $a, Finding $b): int => [str_replace('\\', '/', $a->file), $a->line, -$a->severity->value] <=> [str_replace('\\', '/', $b->file), $b->line, -$b->severity->value]);
 
-        return new AnalysisResult($findings, count($files));
+        usort($diagnostics, static fn (Finding $a, Finding $b): int => [str_replace('\\', '/', $a->file), $a->line, $a->rule] <=> [str_replace('\\', '/', $b->file), $b->line, $b->rule]);
+
+        return new AnalysisResult($findings, count($files), $diagnostics);
     }
 
     /**
@@ -62,6 +74,9 @@ final class TransactionGuard
         $files = [];
 
         foreach ($paths as $path) {
+            if (! file_exists($path) && ! $this->excluded($path, $excludePatterns)) {
+                throw new \InvalidArgumentException("Scan path does not exist [{$path}].");
+            }
             if (is_file($path) && str_ends_with(strtolower($path), '.php')) {
                 if (! $this->excluded($path, $excludePatterns)) {
                     $files[] = realpath($path) ?: $path;

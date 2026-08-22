@@ -149,6 +149,7 @@ They are reported as `TG100` while executed inside a detected transaction.
 | `TG100` | warning | Configured custom side effect |
 | `TG900` | error | Unreadable source file |
 | `TG901` | error | PHP parse failure |
+| `TG902` | error | Analyzer regex/runtime failure |
 
 See [`docs/RULES.md`](docs/RULES.md) for rule details and remediation guidance. The deeper failure model and remediation decision table are in [`docs/ANALYSIS.md`](docs/ANALYSIS.md); regression coverage is documented in [`docs/SCENARIO-MATRIX.md`](docs/SCENARIO-MATRIX.md).
 

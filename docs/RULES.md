@@ -96,6 +96,10 @@ Deferring work until after the HTTP response is a lifecycle boundary, not a data
 
 Laravel concurrency starts child work or defers it outside the current transaction semantics. Child processes cannot be assumed to observe the parent connection's uncommitted state.
 
+## TG902 — analyzer regular-expression failure
+
+Reports a non-baselineable analyzer diagnostic when PCRE fails while evaluating a scanner pattern. This always fails the command, including with `--fail-on=never`, because silently incomplete analysis is unsafe.
+
 ## TG100 — project custom side effect
 
 Use custom patterns for domain integrations Transaction Guard cannot infer safely, such as payment capture or SMS gateways.

@@ -37,7 +37,7 @@ The analyzer builds a lightweight class metadata index for imports, inheritance,
 
 ## Non-goals
 
-- Full interprocedural data-flow analysis.
+- Full interprocedural data-flow analysis. Local inference is deliberately conservative when multiple/conditional reaching assignments are visible.
 - Executing or reflecting user code.
 - Automatically rewriting business logic.
 - Replacing PHPStan/Larastan.

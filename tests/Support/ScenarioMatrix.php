@@ -12,7 +12,7 @@ declare(strict_types=1);
  *
  * @return array<string, array{code:string,rules:list<string>,absent?:list<string>,config?:array<string,mixed>}>
  */
-return [
+$scenarios = [
     'job outside transaction is ignored' => [
         'code' => <<<'PHP'
 <?php
@@ -2370,3 +2370,5 @@ PHP,
     ],
 
 ];
+
+return array_merge($scenarios, require __DIR__.'/Scenarios/V030Hardening.php');

@@ -19,6 +19,9 @@ final readonly class Finding
         public string $remediation,
         public string $confidence = 'high',
         public array $context = [],
+        public ?int $column = null,
+        public ?int $endColumn = null,
+        public string $projectRoot = '',
     ) {}
 
     public function fingerprint(): string
@@ -26,11 +29,11 @@ final readonly class Finding
         $normalized = preg_replace('/\s+/', ' ', trim($this->snippet)) ?? trim($this->snippet);
 
         $file = str_replace('\\', '/', $this->file);
-        $cwd = getcwd();
-        if ($cwd !== false) {
-            $cwd = rtrim(str_replace('\\', '/', realpath($cwd) ?: $cwd), '/').'/';
-            if (str_starts_with($file, $cwd)) {
-                $file = substr($file, strlen($cwd));
+        $root = $this->projectRoot;
+        if ($root !== '') {
+            $root = rtrim(str_replace('\\', '/', realpath($root) ?: $root), '/').'/';
+            if (str_starts_with($file, $root)) {
+                $file = substr($file, strlen($root));
             }
         }
 
@@ -50,6 +53,8 @@ final readonly class Finding
             'message' => $this->message,
             'file' => $this->file,
             'line' => $this->line,
+            'column' => $this->column,
+            'end_column' => $this->endColumn,
             'snippet' => $this->snippet,
             'remediation' => $this->remediation,
             'confidence' => $this->confidence,

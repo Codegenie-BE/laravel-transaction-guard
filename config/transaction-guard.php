@@ -49,6 +49,9 @@ return [
 
     'baseline' => '.transaction-guard-baseline.json',
 
+    /* Fail instead of reporting a clean scan when no PHP files are discovered. */
+    'allow_empty_scan' => false,
+
     /* info | warning | error | critical | never */
     'fail_on' => 'warning',
 ];

@@ -5,6 +5,7 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 foreach ([
     'src/Analysis/Severity.php',
+    'src/Analysis/RuleCatalog.php',
     'src/Analysis/Finding.php',
     'src/Analysis/AnalysisConfig.php',
     'src/Analysis/ClassMetadata.php',

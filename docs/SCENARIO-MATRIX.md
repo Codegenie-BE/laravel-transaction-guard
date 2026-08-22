@@ -2,7 +2,7 @@
 
 The executable source of truth is [`tests/Support/ScenarioMatrix.php`](../tests/Support/ScenarioMatrix.php). Every case contains syntactically valid PHP that is parsed but never executed.
 
-The initial release matrix covers more than one hundred transaction-safety scenarios across these groups:
+The executable matrix is the source of truth for the exact scenario count. It is split into a core matrix plus focused hardening modules and covers these groups:
 
 ## Transaction boundaries
 
