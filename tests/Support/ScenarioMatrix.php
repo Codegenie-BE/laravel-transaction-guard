@@ -969,7 +969,29 @@ PHP,
         'rules' => ['TG006'],
     ],
 
-    'afterCommit text inside string does not make dispatch safe' => [
+    'global dispatch helper with known non queueable class is synchronous' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Actions;
+use Illuminate\Support\Facades\DB;
+class RecalculateOrder {}
+DB::transaction(function () { dispatch(new RecalculateOrder()); });
+CODE,
+        'rules' => ['TG016'],
+        'absent' => ['TG001'],
+    ],
+    'static dispatch on known non queueable Jobs class is synchronous' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Jobs;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Support\Facades\DB;
+class ImmediateJob { use Dispatchable; }
+DB::transaction(function () { ImmediateJob::dispatch(); });
+CODE,
+        'rules' => ['TG016'],
+        'absent' => ['TG001'],
+    ],    'afterCommit text inside string does not make dispatch safe' => [
         'code' => <<<'CODE'
 <?php
 namespace App\Jobs;
