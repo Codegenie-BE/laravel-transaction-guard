@@ -310,7 +310,7 @@ final class SourceScanner
         }
 
         foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Bus', 'Bus') as $alias) {
-            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>dispatchSync|dispatchAfterResponse|dispatch|chain|batch)\s*\(/';
+            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>dispatchSync|dispatchAfterResponse|dispatch|bulk|chain|batch)\s*\(/';
             foreach ($this->matches($pattern) as $match) {
                 $offset = $match['offset'];
                 $tx = $this->eligibleTransaction($offset);
@@ -337,6 +337,61 @@ final class SourceScanner
                     continue;
                 }
 
+                if ($method === 'bulk') {
+                    $jobClasses = $this->newClassesFromStatement($statement);
+                    if ($jobClasses === []) {
+                        $this->appendFinding($findings, $offset, 'TG001', Severity::Warning,
+                            'Bus::bulk() contains jobs that cannot be resolved statically and may execute synchronously or enqueue before commit.',
+                            'Make bulk job classes statically visible or dispatch the bulk after commit.', 'medium');
+                        $this->appendRetryFinding($findings, $offset, $tx, 'bus bulk dispatch');
+
+                        continue;
+                    }
+
+                    $hasSynchronous = false;
+                    $hasUnsafeQueued = false;
+                    $hasUnknown = false;
+                    $singleInlineAfterCommit = count($jobClasses) === 1 && $this->statementContainsAfterCommit($statement);
+
+                    foreach ($jobClasses as $jobClass) {
+                        $metadata = $this->classIndex->metadata($this->context->resolve($jobClass));
+                        if ($metadata === null) {
+                            $hasUnknown = true;
+
+                            continue;
+                        }
+                        if (! $metadata->queued()) {
+                            $hasSynchronous = true;
+
+                            continue;
+                        }
+
+                        $safe = ! $metadata->explicitlyBeforeCommit()
+                            && ($singleInlineAfterCommit
+                                || $metadata->queueAfterCommit()
+                                || $this->queueConnectionDispatchesAfterCommit($statement, $metadata));
+                        if (! $safe) {
+                            $hasUnsafeQueued = true;
+                        }
+                    }
+
+                    if ($hasSynchronous) {
+                        $this->appendFinding($findings, $offset, 'TG016', Severity::Warning,
+                            'Bus::bulk() includes a non-queueable command that Laravel executes synchronously while the database transaction is open.',
+                            'Move the bulk after the transaction or keep synchronous commands outside transactional orchestration.', 'high');
+                        $this->appendRetryFinding($findings, $offset, $tx, 'synchronous bus bulk dispatch');
+                    }
+
+                    if ($hasUnsafeQueued || $hasUnknown) {
+                        $this->appendFinding($findings, $offset, 'TG001', $hasUnsafeQueued ? Severity::Error : Severity::Warning,
+                            'Bus::bulk() may enqueue one or more jobs before the surrounding database transaction commits.',
+                            'Use commit-aware jobs/queue connections or dispatch the bulk after commit.',
+                            $hasUnsafeQueued ? 'high' : 'medium');
+                        $this->appendRetryFinding($findings, $offset, $tx, 'bus bulk dispatch');
+                    }
+
+                    continue;
+                }
                 if (in_array($method, ['chain', 'batch'], true)
                     && preg_match('/->\s*dispatch(?:If|Unless)?\s*\(/i', $statement) !== 1) {
                     continue;
@@ -1575,6 +1630,17 @@ final class SourceScanner
         }
 
         return null;
+    }
+
+    /** @return list<string> */
+    private function newClassesFromStatement(string $statement): array
+    {
+        $result = preg_match_all('/\bnew\s+(\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)/', $statement, $matches);
+        if ($result === false || $result === 0) {
+            return [];
+        }
+
+        return array_values(array_unique($matches[1]));
     }
 
     /** @return list<string> */

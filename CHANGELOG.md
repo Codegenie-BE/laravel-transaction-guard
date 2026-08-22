@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Laravel 13 `Bus::bulk()` analysis distinguishes synchronous commands from commit-sensitive queued jobs, including mixed bulk payloads.
 - Connection-aware manual transaction analysis and `TG021` cross-database-connection write detection.
 - Queued closure, pending chain, raw queue, conditional event, static broadcast, HTTP pool/batch and Process pool coverage.
 - Laravel 13 recursive trait routing, queue forwarding, queue attributes and current route-array connection semantics.
