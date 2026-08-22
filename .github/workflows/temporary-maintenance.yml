@@ -46,11 +46,38 @@ jobs:
         with:
           php-version: '8.5'
           coverage: none
+          tools: composer:v2
 
       - name: Apply branch patch
-        run: php tools/maintenance.php
+        id: patch
+        shell: bash
+        run: |
+          set +e
+          php tools/maintenance.php > /tmp/transaction-guard-maintenance.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/transaction-guard-maintenance.log
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
+
+      - name: Report patch failure
+        if: steps.patch.outputs.status != '0'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          {
+            echo 'Maintenance patch failed.'
+            echo
+            echo '```text'
+            tail -n 80 /tmp/transaction-guard-maintenance.log
+            echo '```'
+          } > /tmp/maintenance-comment.md
+          gh issue comment "${ISSUE_NUMBER}" --repo "${GITHUB_REPOSITORY}" --body-file /tmp/maintenance-comment.md
+          exit 1
 
       - name: Commit patch and remove maintenance script
+        if: steps.patch.outputs.status == '0'
         shell: bash
         env:
           TARGET_BRANCH: ${{ steps.target.outputs.branch }}
@@ -67,6 +94,7 @@ jobs:
           git push origin "HEAD:${TARGET_BRANCH}"
 
       - name: Close maintenance issue
+        if: steps.patch.outputs.status == '0'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
