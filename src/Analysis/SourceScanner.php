@@ -416,15 +416,7 @@ final class SourceScanner
                     continue;
                 }
 
-                if ($this->callArgumentContainsPreference($statement, 'dispatch', 'afterCommit')
-                    || $this->queueConnectionDispatchesAfterCommit($statement)) {
-                    continue;
-                }
 
-                $this->appendFinding($findings, $offset, 'TG001', Severity::Error,
-                    'Bus::dispatch() may execute or enqueue work before the surrounding database transaction commits.',
-                    'Chain afterCommit(), enable after_commit on the selected queue connection, or dispatch after the transaction.', 'high');
-                $this->appendRetryFinding($findings, $offset, $tx, 'bus dispatch');
             }
         }
 
