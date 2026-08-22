@@ -1,235 +1,240 @@
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
-BRANCH = "audit/08-constructor-queue-metadata"
-if len(sys.argv) != 2 or sys.argv[1] != BRANCH:
-    raise SystemExit("unsupported audit branch")
 
-metadata = Path("src/Analysis/ClassMetadata.php")
-text = metadata.read_text()
-old = """        public ?string $constructorQueueConnection = null,\n        public ?string $queueConnectionAttribute = null,\n"""
-new = """        public ?string $constructorQueueConnection = null,\n        public bool $declaresConstructor = false,\n        public ?string $queueConnectionAttribute = null,\n"""
-if old not in text:
-    raise SystemExit("metadata marker missing")
-metadata.write_text(text.replace(old, new, 1))
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    if old not in text:
+        raise SystemExit(f"{label}: expected source block not found")
+    return text.replace(old, new, 1)
 
-index = Path("src/Analysis/ClassMetadataIndex.php")
-text = index.read_text()
-old = """            [$afterCommit, $beforeCommit, $constructorConnection, $constructorQueue, $constructorOverride] =\n                $this->constructorQueueBehavior($tokens, $openBrace + 1, $closeBrace - 1, $source);\n"""
-new = """            [$afterCommit, $beforeCommit, $constructorConnection, $constructorQueue, $constructorOverride, $declaresConstructor] =\n                $this->constructorQueueBehavior($tokens, $openBrace + 1, $closeBrace - 1, $source);\n"""
-if old not in text:
-    raise SystemExit("constructor tuple marker missing")
-text = text.replace(old, new, 1)
-old = """                constructorQueueConnection: $queueConnection,\n                queueConnectionAttribute: $attributeConnection,\n"""
-new = """                constructorQueueConnection: $queueConnection,\n                declaresConstructor: $declaresConstructor,\n                queueConnectionAttribute: $attributeConnection,\n"""
-if old not in text:
-    raise SystemExit("metadata construction marker missing")
-text = text.replace(old, new, 1)
 
-start = text.index("    /**\n     * @param  list<Token>  $tokens\n     * @return array{bool,bool,string|null,string|null,bool|null}\n     */\n    private function constructorQueueBehavior")
-end = text.index("    /**\n     * @return list<array{offset:int,value:bool}>\n     */\n    private function booleanQueuePreferenceMatches", start)
-replacement = r'''    /**
-     * @param  list<Token>  $tokens
-     * @return array{bool,bool,string|null,string|null,bool|null,bool}
-     */
-    private function constructorQueueBehavior(array $tokens, int $start, int $end, string $source): array
-    {
-        for ($i = $start; $i <= $end; $i++) {
-            if (($tokens[$i]['id'] ?? null) !== T_FUNCTION) {
-                continue;
-            }
+def point1() -> None:
+    source = Path("src/Analysis/SourceScanner.php")
+    text = source.read_text()
+    old = """                $metadata = $this->classIndex->metadata($resolved);\n                $method = $this->captured($match, 'method');\n                $statement = $this->statementAt($offset);\n                $looksLikeJob = $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n"""
+    new = """                $metadata = $this->classIndex->metadata($resolved);\n                $method = $this->captured($match, 'method');\n                $statement = $this->statementAt($offset);\n                $globalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\\\\\?dispatch\\\\s*\\\\(\\\\s*new\\\\s+/i', $statement) === 1;\n                $looksLikeJob = $globalDispatchHelper\n                    || $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n"""
+    source.write_text(replace_once(text, old, new, "point1 dispatch"))
 
-            $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING, $end);
-            if ($nameIndex === null || strcasecmp($tokens[$nameIndex]['text'], '__construct') !== 0) {
-                continue;
-            }
-
-            $openBrace = $this->nextText($tokens, $nameIndex + 1, '{', $end);
-            if ($openBrace === null) {
-                return [false, false, null, null, null, true];
-            }
-
-            $closeBrace = $this->matchingBrace($tokens, $openBrace, $end);
-            if ($closeBrace === null) {
-                return [false, false, null, null, null, true];
-            }
-
-            $body = $this->topLevelTokenSource($tokens, $openBrace + 1, $closeBrace - 1, $source);
-            $afterMatches = $this->booleanQueuePreferenceMatches($body);
-            $afterCommit = preg_match('/\$this\s*->\s*afterCommit\s*\(/', $body) === 1;
-            $beforeCommit = preg_match('/\$this\s*->\s*beforeCommit\s*\(/', $body) === 1;
-            $override = $afterMatches === [] ? null : end($afterMatches)['value'];
-
-            return [
-                $afterCommit,
-                $beforeCommit,
-                $this->lastQueueStringSetting($body, 'connection', 'onConnection'),
-                $this->lastQueueStringSetting($body, 'queue', 'onQueue'),
-                $override,
-                true,
-            ];
-        }
-
-        return [false, false, null, null, null, false];
-    }
-
-    /** @param list<Token> $tokens */
-    private function topLevelTokenSource(array $tokens, int $start, int $end, string $source): string
-    {
-        if ($start > $end || ! isset($tokens[$start], $tokens[$end])) {
-            return '';
-        }
-
-        $from = $tokens[$start]['offset'];
-        $to = $tokens[$end]['offset'] + strlen($tokens[$end]['text']);
-        $body = substr($source, $from, max(0, $to - $from));
-        $depth = 0;
-
-        for ($i = $start; $i <= $end; $i++) {
-            $token = $tokens[$i];
-            if ($token['text'] === '{') {
-                $depth++;
-                continue;
-            }
-            if ($token['text'] === '}') {
-                $depth = max(0, $depth - 1);
-                continue;
-            }
-            if ($depth === 0) {
-                continue;
-            }
-
-            $relative = $token['offset'] - $from;
-            $masked = preg_replace('/[^\r\n]/', ' ', $token['text']) ?? str_repeat(' ', strlen($token['text']));
-            $body = substr_replace($body, $masked, $relative, strlen($token['text']));
-        }
-
-        return $body;
-    }
-
-'''
-text = text[:start] + replacement + text[end:]
-text = text.replace("'/->\\s*afterCommit\\s*\\(/' => true,", "'/\\$this\\s*->\\s*afterCommit\\s*\\(/' => true,", 1)
-text = text.replace("'/->\\s*beforeCommit\\s*\\(/' => false,", "'/\\$this\\s*->\\s*beforeCommit\\s*\\(/' => false,", 1)
-
-old = """                constructorQueueConnection: $metadata->constructorQueueConnection,\n                queueConnectionAttribute: $metadata->queueConnectionAttribute,\n"""
-new = """                constructorQueueConnection: $metadata->constructorQueueConnection,\n                declaresConstructor: $metadata->declaresConstructor,\n                queueConnectionAttribute: $metadata->queueConnectionAttribute,\n"""
-if old not in text:
-    raise SystemExit("metadata rebuild marker missing")
-text = text.replace(old, new, 1)
-
-old = """        $index->resolveInheritedInterfaces();\n\n        return $index;\n"""
-new = """        $index->resolveInheritedInterfaces();\n        $index->resolveInheritedConstructorBehavior();\n\n        return $index;\n"""
-if old not in text:
-    raise SystemExit("index finalization marker missing")
-text = text.replace(old, new, 1)
-
-marker = """    /**\n     * @param  array<string, true>  $seen\n     * @return list<string>\n     */\n    private function inheritedInterfacesForClass"""
-helper = r'''    private function resolveInheritedConstructorBehavior(): void
-    {
-        foreach (array_keys($this->classes) as $key) {
-            $this->inheritConstructorBehaviorFor($key, []);
-        }
-    }
-
-    /** @param array<string, true> $seen */
-    private function inheritConstructorBehaviorFor(string $key, array $seen): void
-    {
-        if (isset($seen[$key]) || ! isset($this->classes[$key])) {
-            return;
-        }
-        $seen[$key] = true;
-        $metadata = $this->classes[$key];
-        if ($metadata->declaresConstructor || $metadata->parent === null) {
-            return;
-        }
-
-        $parentKey = strtolower(ltrim($metadata->parent, '\\'));
-        $this->inheritConstructorBehaviorFor($parentKey, $seen);
-        $parent = $this->classes[$parentKey] ?? null;
-        if ($parent === null) {
-            return;
-        }
-
-        $this->classes[$key] = new ClassMetadata(
-            name: $metadata->name,
-            interfaces: $metadata->interfaces,
-            parent: $metadata->parent,
-            constructorAfterCommit: $parent->constructorAfterCommit,
-            constructorBeforeCommit: $parent->constructorBeforeCommit,
-            constructorQueueConnection: $metadata->constructorQueueConnection ?? $parent->constructorQueueConnection,
-            declaresConstructor: false,
-            queueConnectionAttribute: $metadata->queueConnectionAttribute,
-            traits: $metadata->traits,
-            queueName: $metadata->queueName,
-            afterCommitOverride: $metadata->afterCommitOverride ?? $parent->afterCommitOverride,
-        );
-    }
-
-'''
-if marker not in text:
-    raise SystemExit("inheritance marker missing")
-text = text.replace(marker, helper + marker, 1)
-index.write_text(text)
-
-matrix = Path("tests/Support/ScenarioMatrix.php")
-text = matrix.read_text()
-marker = "    'job constructor queue connection unsafe override is respected' => [\n"
-scenarios = r'''    'afterCommit on another object does not configure the job' => [
+    matrix = Path("tests/Support/ScenarioMatrix.php")
+    text = matrix.read_text()
+    marker = "    'fully qualified DB and Http facades are detected' => [\n"
+    scenario = r'''    'global dispatch helper detects job outside Jobs namespace' => [
         'code' => <<<'PHP'
 <?php
-namespace App\Jobs;
-use Illuminate\Contracts\Queue\ShouldQueue;
+namespace App\Work;
 use Illuminate\Support\Facades\DB;
-class ProcessOrder implements ShouldQueue { public function __construct($other) { $other->afterCommit(); } }
-DB::transaction(function () { ProcessOrder::dispatch(new \stdClass()); });
+class RecalculateOrder {}
+DB::transaction(function () { dispatch(new RecalculateOrder()); });
 PHP,
         'rules' => ['TG001'],
     ],
-    'conditional constructor afterCommit is not trusted as unconditional' => [
+    'global dispatch helper outside Jobs namespace is safe after commit' => [
         'code' => <<<'PHP'
 <?php
-namespace App\Jobs;
-use Illuminate\Contracts\Queue\ShouldQueue;
+namespace App\Work;
 use Illuminate\Support\Facades\DB;
-class ProcessOrder implements ShouldQueue { public function __construct(bool $safe) { if ($safe) { $this->afterCommit(); } } }
-DB::transaction(function () { ProcessOrder::dispatch(false); });
-PHP,
-        'rules' => ['TG001'],
-    ],
-    'child without constructor inherits parent afterCommit behavior' => [
-        'code' => <<<'PHP'
-<?php
-namespace App\Jobs;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Support\Facades\DB;
-class BaseJob implements ShouldQueue { public function __construct() { $this->afterCommit(); } }
-class ProcessOrder extends BaseJob {}
-DB::transaction(function () { ProcessOrder::dispatch(); });
+class RecalculateOrder {}
+DB::transaction(function () { dispatch(new RecalculateOrder())->afterCommit(); });
 PHP,
         'rules' => [],
         'absent' => ['TG001'],
     ],
-    'child constructor does not inherit parent constructor afterCommit behavior' => [
-        'code' => <<<'PHP'
-<?php
-namespace App\Jobs;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Support\Facades\DB;
-class BaseJob implements ShouldQueue { public function __construct() { $this->afterCommit(); } }
-class ProcessOrder extends BaseJob { public function __construct() {} }
-DB::transaction(function () { ProcessOrder::dispatch(); });
-PHP,
-        'rules' => ['TG001'],
-    ],
 '''
-if marker not in text:
-    raise SystemExit("scenario marker missing")
-matrix.write_text(text.replace(marker, scenarios + marker, 1))
+    if "global dispatch helper detects job outside Jobs namespace" in text:
+        raise SystemExit("point1 scenarios already present")
+    matrix.write_text(replace_once(text, marker, scenario + marker, "point1 scenario marker"))
 
+
+def point2() -> None:
+    meta = Path("src/Analysis/ClassMetadataIndex.php")
+    text = meta.read_text()
+    signature = "    private function queueNameFor(string $class, array $seen = []): ?string\n"
+    doc = "    /** @param  array<string, true>  $seen */\n"
+    if doc + signature not in text:
+        text = replace_once(text, signature, doc + signature, "point2 queueNameFor")
+    meta.write_text(text)
+
+    source = Path("src/Analysis/SourceScanner.php")
+    text = source.read_text()
+    start = text.index("    private function scanNotifications")
+    end = text.index("    private function scanBroadcasts", start)
+    section = text[start:end]
+    old_nullsafe = "$metadata?->queueAfterCommit()"
+    if old_nullsafe not in section:
+        raise SystemExit("point2 notification nullsafe target not found")
+    section = section.replace(old_nullsafe, "$metadata->queueAfterCommit()", 1)
+    text = text[:start] + section + text[end:]
+
+    old_flush = '''            $flush = function () use (&$regions, &$groupStart, &$groupEnd, &$depth): void {
+                if ($groupStart === null) {
+                    return;
+                }
+
+                $end = $groupEnd ?? strlen($this->source);
+                $regions[] = [
+                    'start' => $groupStart['end'],
+                    'end' => $end,
+                    'line' => $this->lineAtOffset($groupStart['offset']),
+                    'type' => 'manual',
+                    'attempts' => 1,
+                    'connection' => $groupStart['connection'],
+                    'callableStart' => $groupStart['end'],
+                    'callableEnd' => $end,
+                ];
+
+                $groupStart = null;
+                $groupEnd = null;
+                $depth = 0;
+            };
+'''
+    new_flush = '''            /** @param DatabaseControlCall|null $start */
+            $flush = function (?array $start, ?int $endOffset) use (&$regions): void {
+                if ($start === null) {
+                    return;
+                }
+
+                $end = $endOffset ?? strlen($this->source);
+                $regions[] = [
+                    'start' => $start['end'],
+                    'end' => $end,
+                    'line' => $this->lineAtOffset($start['offset']),
+                    'type' => 'manual',
+                    'attempts' => 1,
+                    'connection' => $start['connection'],
+                    'callableStart' => $start['end'],
+                    'callableEnd' => $end,
+                ];
+            };
+'''
+    text = replace_once(text, old_flush, new_flush, "point2 manual transaction flush")
+    text = replace_once(
+        text,
+        "                        $flush();\n                    }\n                    if ($groupStart === null) {",
+        "                        $flush($groupStart, $groupEnd);\n                        $groupStart = null;\n                        $groupEnd = null;\n                        $depth = 0;\n                    }\n                    if ($groupStart === null) {",
+        "point2 nested manual flush call",
+    )
+    text = replace_once(
+        text,
+        "            $flush();\n        }\n\n        return $regions;",
+        "            $flush($groupStart, $groupEnd);\n        }\n\n        return $regions;",
+        "point2 final manual flush call",
+    )
+
+    old_captured = '''        $value = $match['matches'][$name] ?? '';
+        if (is_array($value)) {
+            return (string) $value[0];
+        }
+
+        return (string) $value;
+'''
+    new_captured = '''        $value = $match['matches'][$name] ?? '';
+        if (is_array($value)) {
+            $captured = $value[0] ?? '';
+
+            return is_string($captured) ? $captured : '';
+        }
+
+        return is_string($value) ? $value : '';
+'''
+    text = replace_once(text, old_captured, new_captured, "point2 captured value narrowing")
+    source.write_text(text)
+
+    Path("phpstan.neon").write_text(
+        "includes:\n"
+        "    - vendor/larastan/larastan/extension.neon\n\n"
+        "parameters:\n"
+        "    level: max\n"
+        "    paths:\n"
+        "        - src\n"
+        "    tmpDir: .phpstan-cache\n"
+        "    reportUnmatchedIgnoredErrors: true\n"
+    )
+
+
+def point3() -> None:
+    source = Path("src/Analysis/SourceScanner.php")
+    text = source.read_text()
+    old = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n"
+    new = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        if ($this->transactions === []) {\n            return [];\n        }\n\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n"
+    source.write_text(replace_once(text, old, new, "point3 transaction fast path"))
+
+
+def point4() -> None:
+    baseline = Path("src/Analysis/Baseline.php")
+    text = baseline.read_text()
+    old = '''        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        if (! is_array($decoded)) {
+            return new self;
+        }
+
+        $fingerprintValue = $decoded['fingerprints'] ?? null;
+        $fingerprints = is_array($fingerprintValue) ? $fingerprintValue : [];
+
+        return new self(array_values(array_filter($fingerprints, 'is_string')));
+'''
+    new = '''        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        if (! is_array($decoded)) {
+            throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: expected a JSON object.");
+        }
+
+        $version = $decoded['version'] ?? null;
+        if ($version !== 1) {
+            throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: unsupported or missing version.");
+        }
+
+        $fingerprints = $decoded['fingerprints'] ?? null;
+        if (! is_array($fingerprints)) {
+            throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: fingerprints must be an array.");
+        }
+
+        foreach ($fingerprints as $fingerprint) {
+            if (! is_string($fingerprint) || $fingerprint === '') {
+                throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: every fingerprint must be a non-empty string.");
+            }
+        }
+
+        return new self(array_values($fingerprints));
+'''
+    baseline.write_text(replace_once(text, old, new, "point4 baseline schema"))
+
+    tests = Path("tests/Unit/BaselineTest.php")
+    text = tests.read_text()
+    addition = '''
+
+it('rejects structurally invalid baselines', function (string $json): void {
+    $path = sys_get_temp_dir().'/invalid-transaction-guard-baseline-'.bin2hex(random_bytes(4)).'.json';
+
+    try {
+        file_put_contents($path, $json);
+        expect(fn () => Baseline::load($path))->toThrow(RuntimeException::class);
+    } finally {
+        @unlink($path);
+    }
+})->with([
+    'null root' => 'null',
+    'missing version' => '{"fingerprints":[]}',
+    'wrong version' => '{"version":2,"fingerprints":[]}',
+    'fingerprints not array' => '{"version":1,"fingerprints":"oops"}',
+    'non-string fingerprint' => '{"version":1,"fingerprints":[123]}',
+    'empty fingerprint' => '{"version":1,"fingerprints":[""]}',
+]);
+'''
+    if "rejects structurally invalid baselines" in text:
+        raise SystemExit("point4 baseline regression test already present")
+    tests.write_text(text.rstrip() + addition)
+
+
+POINTS = {
+    "audit/01-global-dispatch": point1,
+    "audit/02-phpstan-zero-ignores": point2,
+    "audit/03-fast-path": point3,
+    "audit/04-baseline-schema": point4,
+}
+
+if len(sys.argv) != 2 or sys.argv[1] not in POINTS:
+    raise SystemExit("unsupported audit branch")
+
+POINTS[sys.argv[1]]()
 Path(".audit-request").unlink(missing_ok=True)
-base = subprocess.run(["git", "show", "origin/main:.github/audit_writer.py"], check=True, capture_output=True, text=True).stdout
-Path(".github/audit_writer.py").write_text(base)
