@@ -40,3 +40,5 @@ write('src/Analysis/ClassMetadataIndex.php', text)
 '''
 code = code[:start] + replacement + code[end:]
 exec(compile(code, str(path), 'exec'), {'__file__': str(path), '__name__': '__main__'})
+
+# This tracked runner is intentionally removed after the validated finalize run.
