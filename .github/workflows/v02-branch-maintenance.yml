@@ -1,8 +1,6 @@
 name: V0.2 branch maintenance
 
 on:
-  issues:
-    types: [opened]
   pull_request_target:
     types: [reopened]
 
@@ -14,29 +12,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  maintain:
+  fix:
     if: >-
       github.actor == 'jordyloeuille' &&
-      (
-        (github.event_name == 'issues' && github.event.issue.title == 'Run Transaction Guard v0.2 maintenance round 2') ||
-        (github.event_name == 'pull_request_target' && github.event.pull_request.head.ref == 'feature/v0.2-analyzer-hardening-clean')
-      )
+      github.event.pull_request.head.ref == 'feature/v0.2-analyzer-hardening-clean'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
+    outputs:
+      head-sha: ${{ steps.commit.outputs.head-sha }}
+
     steps:
-      - name: Checkout clean PR branch
+      - name: Checkout authorized PR branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: feature/v0.2-analyzer-hardening-clean
           fetch-depth: 0
 
-      - name: Remove duplicate helper
+      - name: Apply reviewed analyzer fixes
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           path = Path('src/Analysis/SourceScanner.php')
           text = path.read_text()
+
+          # Remove the duplicate helper left by the refactor, if present.
           needle = '    private function callArgumentContainsPreference(string $statement, string $callMethod, string $preference): bool\n'
           first = text.find(needle)
           second = text.find(needle, first + 1)
@@ -47,10 +48,21 @@ jobs:
               end = text.find(end_marker, second)
               if end < 0:
                   raise SystemExit('Could not find end of duplicate helper')
-              path.write_text(text[:second] + text[end:])
+              text = text[:second] + text[end:]
+
+          # Cross-connection findings are high-confidence only for statically literal
+          # connection names. Do not let a regex span the outer transaction call and
+          # accidentally consume an inner DB::connection(...).
+          old = "            $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::\\s*connection\\s*\\((?P<connection>[^;]*?)\\)\\s*->(?:(?![;{}]).)*?\\b(?P<method>'.$mutations.')\\s*\\(/is';\n            foreach ($this->matches($connectionPattern) as $match) {\n                $this->reportCrossConnectionWrite($findings, $match['offset'], $this->connectionFromExpression($this->captured($match, 'connection')));\n            }"
+          new = "            $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::\\s*connection\\s*\\(\\s*(?P<quote>[\\\'\\\"])(?P<connection>[^\\\'\\\"]+)\\k<quote>\\s*\\)\\s*->(?:(?![;{}]).)*?\\b(?P<method>'.$mutations.')\\s*\\(/is';\n            foreach ($this->matches($connectionPattern) as $match) {\n                $this->reportCrossConnectionWrite($findings, $match['offset'], $this->captured($match, 'connection'));\n            }"
+          if old not in text:
+              raise SystemExit('Cross-connection pattern fragment was not found')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
           PY
 
-      - name: Setup PHP
+      - name: Setup PHP for formatting
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.5'
@@ -63,19 +75,121 @@ jobs:
       - name: Apply Pint
         run: composer format
 
-      - name: Commit branch fix
+      - name: Commit validated source fixes
+        id: commit
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- src/Analysis/SourceScanner.php
           if ! git diff --cached --quiet; then
-            git commit -m 'fix: remove duplicate analyzer helper'
+            git commit -m 'fix: harden cross-connection analysis'
             git push origin HEAD:feature/v0.2-analyzer-hardening-clean
           fi
+          echo "head-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Run smoke matrix
+  compatibility:
+    needs: fix
+    if: needs.fix.result == 'success'
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - php: '8.2'
+            laravel: '^12.0'
+            testbench: '^10.0'
+            pest: '^3.0'
+          - php: '8.3'
+            laravel: '^12.0'
+            testbench: '^10.0'
+            pest: '^3.0'
+          - php: '8.3'
+            laravel: '^13.0'
+            testbench: '^11.0'
+            pest: '^4.0'
+          - php: '8.4'
+            laravel: '^12.0'
+            testbench: '^10.0'
+            pest: '^3.0'
+          - php: '8.4'
+            laravel: '^13.0'
+            testbench: '^11.0'
+            pest: '^4.0'
+          - php: '8.5'
+            laravel: '^12.0'
+            testbench: '^10.0'
+            pest: '^3.0'
+          - php: '8.5'
+            laravel: '^13.0'
+            testbench: '^11.0'
+            pest: '^4.0'
+
+    steps:
+      - name: Checkout fixed branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.fix.outputs.head-sha }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Pin Laravel test dependencies
+        run: composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-update --no-interaction
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Validate Composer metadata
+        run: composer validate --strict
+
+      - name: Audit dependencies
+        run: composer audit --no-interaction
+
+      - name: Run smoke regression matrix
         run: composer test:smoke
+
+      - name: Run Pest suite
+        run: composer test
+
+      - name: Check formatting
+        run: composer format:test
 
       - name: Run PHPStan
         run: composer analyse
+
+  coverage:
+    needs: fix
+    if: needs.fix.result == 'success'
+    name: Coverage / PHP 8.5 / Laravel 13
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout fixed branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.fix.outputs.head-sha }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: xdebug
+          tools: composer:v2
+
+      - name: Pin Laravel 13 test dependencies
+        run: composer require --dev 'orchestra/testbench:^11.0' 'pestphp/pest:^4.0' --no-update --no-interaction
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Enforce coverage baseline
+        run: composer test:coverage
