@@ -14,154 +14,14 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   COMPOSER_MAX_PARALLEL_HTTP: 4
 
 jobs:
-  v02-fix:
-    name: V0.2 reviewed source fixes
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 7 && github.head_ref == 'feature/v0.2-analyzer-hardening-clean' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout authorized branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: feature/v0.2-analyzer-hardening-clean
-          fetch-depth: 0
-
-      - name: Apply reviewed fixes
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          source = Path('src/Analysis/SourceScanner.php')
-          text = source.read_text()
-
-          fast_old = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
-          fast_new = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        if ($this->transactions === []) {\n            return [];\n        }\n\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
-          if fast_old in text:
-              text = text.replace(fast_old, fast_new, 1)
-
-          job_old = "                $looksLikeJob = $metadata?->queued() === true\n"
-          job_new = "                $isGlobalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\?dispatch\\s*\\(\\s*new\\s+/i', $statement) === 1;\n                $looksLikeJob = $isGlobalDispatchHelper\n                    || $metadata?->queued() === true\n"
-          if job_old in text:
-              text = text.replace(job_old, job_new, 1)
-
-          start = text.index('    private function scanNotifications')
-          end = text.index('    private function scanBroadcasts', start)
-          section = text[start:end].replace('$metadata?->queueAfterCommit()', '$metadata->queueAfterCommit()', 1)
-          text = text[:start] + section + text[end:]
-
-          flush_old = '''            $flush = function () use (&$regions, &$groupStart, &$groupEnd, &$depth): void {
-                if ($groupStart === null) {
-                    return;
-                }
-
-                $end = $groupEnd ?? strlen($this->source);
-                $regions[] = [
-                    'start' => $groupStart['end'],
-                    'end' => $end,
-                    'line' => $this->lineAtOffset($groupStart['offset']),
-                    'type' => 'manual',
-                    'attempts' => 1,
-                    'connection' => $groupStart['connection'],
-                    'callableStart' => $groupStart['end'],
-                    'callableEnd' => $end,
-                ];
-
-                $groupStart = null;
-                $groupEnd = null;
-                $depth = 0;
-            };
-'''
-          flush_new = '''            /** @param DatabaseControlCall|null $start */
-            $flush = function (?array $start, ?int $endOffset) use (&$regions): void {
-                if ($start === null) {
-                    return;
-                }
-
-                $end = $endOffset ?? strlen($this->source);
-                $regions[] = [
-                    'start' => $start['end'],
-                    'end' => $end,
-                    'line' => $this->lineAtOffset($start['offset']),
-                    'type' => 'manual',
-                    'attempts' => 1,
-                    'connection' => $start['connection'],
-                    'callableStart' => $start['end'],
-                    'callableEnd' => $end,
-                ];
-            };
-'''
-          if flush_old in text:
-              text = text.replace(flush_old, flush_new, 1)
-              text = text.replace("                        $flush();\n                    }\n                    if ($groupStart === null) {", "                        $flush($groupStart, $groupEnd);\n                        $groupStart = null;\n                        $groupEnd = null;\n                        $depth = 0;\n                    }\n                    if ($groupStart === null) {", 1)
-              text = text.replace("            $flush();\n        }\n\n        return $regions;", "            $flush($groupStart, $groupEnd);\n        }\n\n        return $regions;", 1)
-          source.write_text(text)
-
-          metadata = Path('src/Analysis/ClassMetadataIndex.php')
-          text = metadata.read_text()
-          signature = '    private function queueNameFor(string $class, array $seen = []): ?string\n'
-          doc = '    /** @param  array<string, true>  $seen */\n'
-          if doc + signature not in text:
-              if signature not in text:
-                  raise SystemExit('queueNameFor signature not found')
-              text = text.replace(signature, doc + signature, 1)
-          metadata.write_text(text)
-
-          matrix = Path('tests/Support/ScenarioMatrix.php')
-          text = matrix.read_text()
-          if 'global dispatch helper detects job outside Jobs namespace' not in text:
-              marker = "    'fully qualified DB and Http facades are detected' => [\n"
-              if marker not in text:
-                  raise SystemExit('Scenario insertion marker not found')
-              scenario = r'''    'global dispatch helper detects job outside Jobs namespace' => [
-        'code' => <<<'PHP'
-<?php
-namespace App\Work;
-use Illuminate\Support\Facades\DB;
-class RecalculateOrder {}
-DB::transaction(function () { dispatch(new RecalculateOrder()); });
-PHP,
-        'rules' => ['TG001'],
-    ],
-'''
-              matrix.write_text(text.replace(marker, scenario + marker, 1))
-          PY
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
-        with:
-          php-version: '8.5'
-          coverage: none
-          tools: composer:v2
-
-      - run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-      - run: composer format
-      - run: composer test:smoke
-      - run: composer test
-      - run: composer analyse
-
-      - name: Commit validated fixes and restore workflows
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main
-          git checkout origin/main -- .github/workflows/tests.yml
-          git rm -f .github/workflows/v02-self-fix.yml || true
-          git add -- src/Analysis/SourceScanner.php src/Analysis/ClassMetadataIndex.php tests/Support/ScenarioMatrix.php .github/workflows/tests.yml .github/workflows/v02-self-fix.yml
-          git commit -m 'fix: complete v0.2 analyzer validation'
-          git push origin HEAD:feature/v0.2-analyzer-hardening-clean
-
   quality:
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
-    if: github.head_ref != 'feature/v0.2-analyzer-hardening-clean' || github.actor == 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -197,34 +57,162 @@ PHP,
             laravel: '^13.0'
             testbench: '^11.0'
             pest: '^4.0'
+
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: ${{ matrix.php }}
           coverage: none
           tools: composer:v2
-      - run: composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-update --no-interaction
-      - run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-      - run: composer validate --strict
-      - run: composer audit --no-interaction
-      - run: composer test:smoke
-      - run: composer test
-      - run: composer format:test
-      - run: composer analyse
+
+      - name: Pin Laravel test dependencies
+        run: composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-update --no-interaction
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Validate Composer metadata
+        run: composer validate --strict
+
+      - name: Audit dependencies
+        run: composer audit --no-interaction
+
+      - name: Run dependency-free regression matrix
+        run: composer test:smoke
+
+      - name: Run Pest suite
+        run: composer test
+
+      - name: Check formatting
+        run: composer format:test
+
+      - name: Run static analysis
+        run: composer analyse
 
   coverage:
     name: Coverage / PHP 8.5 / Laravel 13
-    if: github.head_ref != 'feature/v0.2-analyzer-hardening-clean' || github.actor == 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.5'
           coverage: xdebug
           tools: composer:v2
-      - run: composer require --dev 'orchestra/testbench:^11.0' 'pestphp/pest:^4.0' --no-update --no-interaction
-      - run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-      - run: composer test:coverage
+
+      - name: Pin Laravel 13 test dependencies
+        run: composer require --dev 'orchestra/testbench:^11.0' 'pestphp/pest:^4.0' --no-update --no-interaction
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Enforce coverage baseline
+        run: composer test:coverage
+
+  release:
+    name: Publish validated changelog release
+    needs:
+      - quality
+      - coverage
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.quality.result == 'success' &&
+      needs.coverage.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout validated main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Determine release tag
+        id: release
+        shell: bash
+        run: |
+          tag="$(sed -nE 's/^## \[(v[0-9]+\.[0-9]+\.[0-9]+)\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$/\1/p' CHANGELOG.md | head -n 1)"
+
+          if [ -z "${tag}" ]; then
+            echo 'No versioned changelog section found; no release to publish.'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "${tag} already exists; checking release publication state."
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          else
+            echo "Publishing ${tag} from ${GITHUB_SHA}."
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create annotated release tag
+        if: steps.release.outputs.publish == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag --annotate "${RELEASE_TAG}" --message "${RELEASE_TAG}"
+          git push origin "${RELEASE_TAG}"
+
+      - name: Ensure GitHub release exists
+        if: steps.release.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "GitHub release ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --verify-tag \
+            --generate-notes \
+            --title "${RELEASE_TAG}"
+
+      - name: Check Packagist visibility
+        if: steps.release.outputs.tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          endpoint='https://repo.packagist.org/p2/codegenie-be/laravel-transaction-guard.json'
+
+          for attempt in {1..6}; do
+            if response="$(curl --fail --silent --show-error --location "${endpoint}" 2>/dev/null)"; then
+              if jq --exit-status \
+                --arg tag "${RELEASE_TAG}" \
+                --arg commit "${RELEASE_COMMIT}" \
+                '.packages["codegenie-be/laravel-transaction-guard"] | any(.version == $tag and .source.reference == $commit)' \
+                <<< "${response}" >/dev/null; then
+                echo "Packagist exposes ${RELEASE_TAG} at ${RELEASE_COMMIT}."
+                exit 0
+              fi
+            fi
+
+            echo "Waiting for Packagist visibility (${attempt}/6)..."
+            sleep 10
+          done
+
+          echo 'Packagist does not expose this package yet. The GitHub release remains valid; initial Packagist registration must be completed through an authorized Packagist account.'
