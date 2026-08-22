@@ -617,7 +617,58 @@ PHP,
         'rules' => [],
         'absent' => ['TG006', 'TG011'],
     ],
-    'manual transaction side effect before commit is flagged' => [
+    'conditional manual commit does not prove the transaction closed' => [
+        'code' => <<<'CODE'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::beginTransaction();
+if ($shouldCommit) {
+    DB::commit();
+}
+Http::post('https://example.test/capture');
+CODE,
+        'rules' => ['TG006', 'TG013'],
+    ],
+    'unbraced conditional manual commit does not prove the transaction closed' => [
+        'code' => <<<'CODE'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::beginTransaction();
+if ($shouldCommit) DB::commit();
+Http::post('https://example.test/capture');
+CODE,
+        'rules' => ['TG006', 'TG013'],
+    ],
+    'manual transaction opened and closed in the same branch is bounded there' => [
+        'code' => <<<'CODE'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+if ($enabled) {
+    DB::beginTransaction();
+    DB::commit();
+}
+Http::post('https://example.test/outside');
+CODE,
+        'rules' => [],
+        'absent' => ['TG006', 'TG013'],
+    ],
+    'side effect inside branch-contained manual transaction is detected' => [
+        'code' => <<<'CODE'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+if ($enabled) {
+    DB::beginTransaction();
+    Http::post('https://example.test/capture');
+    DB::commit();
+}
+CODE,
+        'rules' => ['TG006'],
+        'absent' => ['TG013'],
+    ],    'manual transaction side effect before commit is flagged' => [
         'code' => <<<'PHP'
 <?php
 use Illuminate\Support\Facades\DB;

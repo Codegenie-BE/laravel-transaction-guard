@@ -8,7 +8,7 @@ use ParseError;
 
 /**
  * @phpstan-type TransactionRegion array{start:int,end:int,line:int,type:string,attempts:int,connection:string,callableStart:int,callableEnd:int}
- * @phpstan-type DatabaseControlCall array{type:string,offset:int,end:int,scope:string,connection:string}
+ * @phpstan-type DatabaseControlCall array{type:string,offset:int,end:int,scope:string,connection:string,conditionalScope:string|null}
  */
 final class SourceScanner
 {
@@ -1088,20 +1088,28 @@ final class SourceScanner
                 continue;
             }
 
-            if (in_array($call['type'], ['commit', 'rollback'], true) && ($stacks[$key] ?? []) !== []) {
-                array_pop($stacks[$key]);
+            if (! in_array($call['type'], ['commit', 'rollback'], true) || ($stacks[$key] ?? []) === []) {
+                continue;
             }
+
+            $start = end($stacks[$key]);
+            if ($start === false || ! $this->manualTerminalCloses($start, $call)) {
+                continue;
+            }
+
+            array_pop($stacks[$key]);
         }
 
         foreach ($stacks as $stack) {
             foreach ($stack as $call) {
                 $this->appendFinding($findings, $call['offset'], 'TG013', Severity::Critical,
-                    "A manually started database transaction on [{$call['connection']}] has no matching commit() or rollBack() on the same connection in this source flow.",
-                    'Prefer DB::transaction() or guarantee a same-connection commit/rollback with a try/catch/finally structure.', 'medium',
+                    "A manually started database transaction on [{$call['connection']}] has no matching commit() or rollBack() on every statically visible branch.",
+                    'Prefer DB::transaction() or guarantee a same-connection commit/rollback on every branch and exception path.', 'medium',
                     ['database_connection' => $call['connection']]);
             }
         }
     }
+
 
     /** @return list<TransactionRegion> */
     private function findClosureTransactions(): array
@@ -1154,15 +1162,9 @@ final class SourceScanner
             $groupEnd = null;
             $depth = 0;
 
-            /** @param array{type:string,offset:int,end:int,scope:string,connection:string}|null $start */
+            /** @param DatabaseControlCall|null $start */
             $flush = function (?array $start, ?int $endOffset) use (&$regions): void {
                 if ($start === null) {
-                    return;
-                }
-                if (! isset($start['offset'], $start['end'], $start['connection'])
-                    || ! is_int($start['offset'])
-                    || ! is_int($start['end'])
-                    || ! is_string($start['connection'])) {
                     return;
                 }
 
@@ -1195,7 +1197,7 @@ final class SourceScanner
                     continue;
                 }
 
-                if ($groupStart === null) {
+                if ($groupStart === null || ! $this->manualTerminalCloses($groupStart, $call)) {
                     continue;
                 }
 
@@ -1211,6 +1213,7 @@ final class SourceScanner
         return $regions;
     }
 
+
     /** @return list<DatabaseControlCall> */
     private function manualControlCalls(): array
     {
@@ -1224,6 +1227,7 @@ final class SourceScanner
                     'end' => $this->statementEnd($offset),
                     'scope' => $this->callableScopeAt($offset),
                     'connection' => $dbCall['connection'],
+                    'conditionalScope' => $this->conditionalControlScopeAt($offset),
                 ];
             }
         }
@@ -1233,6 +1237,117 @@ final class SourceScanner
         return $calls;
     }
 
+
+    /**
+     * @param  DatabaseControlCall  $start
+     * @param  DatabaseControlCall  $terminal
+     */
+    private function manualTerminalCloses(array $start, array $terminal): bool
+    {
+        return $terminal['conditionalScope'] === null
+            || $terminal['conditionalScope'] === $start['conditionalScope'];
+    }
+
+    private function conditionalControlScopeAt(int $offset): ?string
+    {
+        $target = $this->tokenIndexContainingOrAfterOffset($offset);
+        if ($target === null) {
+            return null;
+        }
+
+        /** @var list<string|null> $blocks */
+        $blocks = [];
+        for ($i = 0; $i < $target; $i++) {
+            $text = $this->tokens[$i]['text'];
+            if ($text === '{') {
+                $blocks[] = $this->openingBraceStartsConditionalBlock($i)
+                    ? 'block:'.$this->tokens[$i]['offset']
+                    : null;
+
+                continue;
+            }
+            if ($text === '}') {
+                array_pop($blocks);
+            }
+        }
+
+        for ($i = count($blocks) - 1; $i >= 0; $i--) {
+            if ($blocks[$i] !== null) {
+                return $blocks[$i];
+            }
+        }
+
+        for ($i = $target - 1; $i >= 0; $i--) {
+            $token = $this->tokens[$i];
+            if (in_array($token['text'], [';', '{', '}'], true)) {
+                break;
+            }
+            if (in_array($token['id'], [T_IF, T_ELSEIF, T_FOR, T_FOREACH, T_WHILE, T_DO], true)) {
+                return 'statement:'.$token['offset'];
+            }
+        }
+
+        return null;
+    }
+
+    private function openingBraceStartsConditionalBlock(int $braceIndex): bool
+    {
+        $previous = $this->previousSignificantToken($braceIndex - 1);
+        if ($previous === null) {
+            return false;
+        }
+
+        $id = $this->tokens[$previous]['id'];
+        if (in_array($id, [T_ELSE, T_DO], true)) {
+            return true;
+        }
+        if ($this->tokens[$previous]['text'] !== ')') {
+            return false;
+        }
+
+        $open = $this->matchingOpeningToken($previous, '(', ')');
+        if ($open === null) {
+            return false;
+        }
+        $control = $this->previousSignificantToken($open - 1);
+        if ($control === null) {
+            return false;
+        }
+
+        return in_array($this->tokens[$control]['id'], [T_IF, T_ELSEIF, T_FOR, T_FOREACH, T_WHILE, T_SWITCH], true);
+    }
+
+    private function previousSignificantToken(int $start): ?int
+    {
+        for ($i = $start; $i >= 0; $i--) {
+            $id = $this->tokens[$i]['id'];
+            if ($id !== null && in_array($id, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            return $i;
+        }
+
+        return null;
+    }
+
+    private function matchingOpeningToken(int $close, string $openText, string $closeText): ?int
+    {
+        $depth = 0;
+        for ($i = $close; $i >= 0; $i--) {
+            $text = $this->tokens[$i]['text'];
+            if ($text === $closeText) {
+                $depth++;
+            } elseif ($text === $openText) {
+                $depth--;
+                if ($depth === 0) {
+                    return $i;
+                }
+            }
+        }
+
+        return null;
+    }
     private function callableScopeAt(int $offset): string
     {
         $best = null;
