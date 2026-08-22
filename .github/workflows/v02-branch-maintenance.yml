@@ -3,6 +3,8 @@ name: V0.2 branch maintenance
 on:
   issues:
     types: [opened]
+  pull_request_target:
+    types: [reopened]
 
 permissions:
   contents: write
@@ -15,7 +17,10 @@ jobs:
   maintain:
     if: >-
       github.actor == 'jordyloeuille' &&
-      github.event.issue.title == 'Run Transaction Guard v0.2 maintenance round 2'
+      (
+        (github.event_name == 'issues' && github.event.issue.title == 'Run Transaction Guard v0.2 maintenance round 2') ||
+        (github.event_name == 'pull_request_target' && github.event.pull_request.head.ref == 'feature/v0.2-analyzer-hardening-clean')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
