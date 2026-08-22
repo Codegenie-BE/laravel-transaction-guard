@@ -8,6 +8,7 @@ The initial release matrix covers more than one hundred transaction-safety scena
 
 - `DB::transaction()` callback syntax;
 - arrow functions;
+- simple local closure variables passed to `DB::transaction()` plus unresolved-callback diagnostics;
 - `DB::connection(...)->transaction()`;
 - facade aliases;
 - manual begin/commit/rollback, balanced per database connection;
@@ -64,6 +65,8 @@ The initial release matrix covers more than one hundred transaction-safety scena
 - Redis read-only calls that should remain clean;
 - external processes/shell execution;
 - Laravel concurrency/deferred execution;
+- locally assigned HTTP/filesystem/cache/Redis/process/database handles;
+- Eloquent cross-connection writes with statically known model connections;
 - configurable project-specific gateway patterns.
 
 ## Retried transactions

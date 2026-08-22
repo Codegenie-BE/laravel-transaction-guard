@@ -15,7 +15,7 @@ final class TransactionGuardCommand extends Command
 {
     protected $signature = 'transaction:guard
         {paths?* : Files or directories to scan; defaults to configured paths}
-        {--format=console : Output format: console, json, github}
+        {--format=console : Output format: console, json, github, sarif}
         {--fail-on= : Minimum severity that fails the command: info, warning, error, critical, never}
         {--baseline= : Baseline path; defaults to the configured baseline}
         {--no-baseline : Ignore the baseline}
@@ -27,8 +27,8 @@ final class TransactionGuardCommand extends Command
     {
         $formatOption = $this->option('format');
         $format = is_string($formatOption) ? strtolower($formatOption) : 'console';
-        if (! in_array($format, ['console', 'json', 'github'], true)) {
-            $this->error('Invalid --format. Use console, json, or github.');
+        if (! in_array($format, ['console', 'json', 'github', 'sarif'], true)) {
+            $this->error('Invalid --format. Use console, json, github, or sarif.');
 
             return self::INVALID;
         }
@@ -49,6 +49,7 @@ final class TransactionGuardCommand extends Command
                 disabledRules: $this->stringListConfig('transaction-guard.disabled_rules'),
                 detectReadHttpCalls: (bool) config('transaction-guard.detect_read_http_calls', false),
                 defaultDatabaseConnection: $this->stringConfig('database.default', '@default'),
+                databaseDriverByConnection: $this->databaseDriverMap(),
             );
 
             $guard = new TransactionGuard($analysisConfig);
@@ -130,6 +131,25 @@ final class TransactionGuardCommand extends Command
         return $result;
     }
 
+    /** @return array<string, string> */
+    private function databaseDriverMap(): array
+    {
+        $configuredConnections = config('database.connections', []);
+        if (! is_array($configuredConnections)) {
+            return [];
+        }
+
+        $drivers = [];
+        foreach ($configuredConnections as $name => $configuration) {
+            if (! is_array($configuration) || ! isset($configuration['driver']) || ! is_string($configuration['driver'])) {
+                continue;
+            }
+            $drivers[(string) $name] = $configuration['driver'];
+        }
+
+        return $drivers;
+    }
+
     /** @param  list<Finding>  $findings */
     private function render(string $format, array $findings, int $filesAnalyzed): void
     {
@@ -137,7 +157,13 @@ final class TransactionGuardCommand extends Command
             $this->line(json_encode([
                 'files_analyzed' => $filesAnalyzed,
                 'findings' => array_map(static fn (Finding $finding): array => $finding->toArray(), $findings),
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR));
+
+            return;
+        }
+
+        if ($format === 'sarif') {
+            $this->line(json_encode($this->sarifPayload($findings), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR));
 
             return;
         }
@@ -172,6 +198,64 @@ final class TransactionGuardCommand extends Command
         $this->table(['Severity', 'Rule', 'Location', 'Finding'], $rows);
         $this->newLine();
         $this->warn(sprintf('Transaction Guard found %d issue(s) across %d PHP files.', count($findings), $filesAnalyzed));
+    }
+
+    /**
+     * @param  list<Finding>  $findings
+     * @return array<string, mixed>
+     */
+    private function sarifPayload(array $findings): array
+    {
+        $rules = [];
+        $results = [];
+
+        foreach ($findings as $finding) {
+            $rules[$finding->rule] ??= [
+                'id' => $finding->rule,
+                'name' => $finding->rule,
+                'shortDescription' => ['text' => $finding->message],
+                'help' => ['text' => $finding->remediation],
+            ];
+            $results[] = [
+                'ruleId' => $finding->rule,
+                'level' => $this->sarifLevel($finding->severity),
+                'message' => ['text' => $finding->message],
+                'locations' => [[
+                    'physicalLocation' => [
+                        'artifactLocation' => ['uri' => $this->relativePath($finding->file)],
+                        'region' => ['startLine' => $finding->line],
+                    ],
+                ]],
+                'partialFingerprints' => ['transactionGuardFingerprint' => $finding->fingerprint()],
+                'properties' => [
+                    'severity' => $finding->severity->label(),
+                    'confidence' => $finding->confidence,
+                    'context' => $finding->context,
+                ],
+            ];
+        }
+
+        return [
+            '$schema' => 'https://json.schemastore.org/sarif-2.1.0.json',
+            'version' => '2.1.0',
+            'runs' => [[
+                'tool' => ['driver' => [
+                    'name' => 'Laravel Transaction Guard',
+                    'informationUri' => 'https://github.com/Codegenie-BE/laravel-transaction-guard',
+                    'rules' => array_values($rules),
+                ]],
+                'results' => $results,
+            ]],
+        ];
+    }
+
+    private function sarifLevel(Severity $severity): string
+    {
+        return match ($severity) {
+            Severity::Critical, Severity::Error => 'error',
+            Severity::Warning => 'warning',
+            Severity::Info => 'note',
+        };
     }
 
     /** @return list<string> */

@@ -114,6 +114,7 @@
         "format:test": "Check Laravel Pint formatting without changing files.",
         "test": "Run the Pest suite.",
         "test:coverage": "Run Pest with the enforced 80% coverage baseline.",
-        "test:smoke": "Run the dependency-free transaction-safety regression matrix."
+        "test:smoke": "Run the dependency-free transaction-safety regression matrix.",
+            "benchmark": "Profile representative transaction-free, safe and side-effect-heavy analyzer workloads."
     }
 }

@@ -142,3 +142,35 @@ it('emits GitHub Actions annotations', function (): void {
         @unlink($file);
     }
 });
+
+it('emits SARIF 2.1.0 output', function (): void {
+    $file = tempnam(sys_get_temp_dir(), 'tg-sarif-').'.php';
+    file_put_contents($file, "<?php\nuse Illuminate\\Support\\Facades\\DB;\nuse Illuminate\\Support\\Facades\\Http;\nDB::transaction(fn () => Http::post('https://example.test'));\n");
+
+    try {
+        $this->artisan('transaction:guard', [
+            'paths' => [$file],
+            '--format' => 'sarif',
+            '--fail-on' => 'never',
+        ])->expectsOutputToContain('"version": "2.1.0"')
+            ->assertSuccessful();
+    } finally {
+        @unlink($file);
+    }
+});
+
+it('keeps JSON output valid for invalid UTF-8 source snippets', function (): void {
+    $file = tempnam(sys_get_temp_dir(), 'tg-utf8-').'.php';
+    file_put_contents($file, "<?php\nuse Illuminate\\Support\\Facades\\DB;\nuse Illuminate\\Support\\Facades\\Http;\nDB::transaction(function () { /* ".chr(0xB1)." */ Http::post('https://example.test'); });\n");
+
+    try {
+        $this->artisan('transaction:guard', [
+            'paths' => [$file],
+            '--format' => 'json',
+            '--fail-on' => 'never',
+        ])->expectsOutputToContain('TG006')
+            ->assertSuccessful();
+    } finally {
+        @unlink($file);
+    }
+});

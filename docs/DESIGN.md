@@ -46,7 +46,7 @@ The analyzer builds a lightweight class metadata index for imports, inheritance,
 
 ## Release boundaries
 
-The first release intentionally stops short of a full PHP call-graph engine. Trait-based and array-form Laravel 13 queue routes, `Queue::forward()`, queue attributes/enums, arbitrary observer/listener indirection, and runtime configuration mutation remain documented limitations rather than guessed behavior. Critical cross-system atomic delivery remains an application architecture concern; use a transactional outbox/idempotency where required.
+The analyzer intentionally stops short of a full PHP call-graph engine. It supports bounded local inference for closure variables, payload variables and common Laravel facade-derived handles, plus statically resolvable Laravel 13 queue routing/forwarding/attributes. Arbitrary observer/listener indirection, container bindings and runtime configuration mutation remain documented limitations rather than guessed behavior. Critical cross-system atomic delivery remains an application architecture concern; use a transactional outbox/idempotency where required.
 
 
 ## Static-analysis boundary

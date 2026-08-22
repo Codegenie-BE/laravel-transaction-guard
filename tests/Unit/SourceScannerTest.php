@@ -25,6 +25,7 @@ function scanTransactionGuardScenario(array $case): array
         disabledRules: (array) ($cfg['disabled_rules'] ?? []),
         detectReadHttpCalls: (bool) ($cfg['detect_read_http_calls'] ?? false),
         defaultDatabaseConnection: (string) ($cfg['database_default'] ?? '@default'),
+        databaseDriverByConnection: (array) ($cfg['database_drivers'] ?? []),
     );
 
     try {
@@ -98,6 +99,25 @@ PHP,
     $retry = collect($findings)->firstWhere('rule', 'TG011');
     expect($retry)->not->toBeNull()
         ->and($retry->severity->label())->toBe('warning');
+});
+
+it('uses database-driver-aware implicit commit severity', function (): void {
+    $findings = scanTransactionGuardScenario([
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection('pgsql')->transaction(fn () => DB::statement('CREATE TABLE example (id INT)'));
+PHP,
+        'rules' => ['TG012'],
+        'config' => [
+            'database_default' => 'pgsql',
+            'database_drivers' => ['pgsql' => 'pgsql'],
+        ],
+    ]);
+
+    $ddl = collect($findings)->firstWhere('rule', 'TG012');
+    expect($ddl)->not->toBeNull()
+        ->and($ddl->severity->label())->toBe('warning');
 });
 
 it('classifies DDL and unclosed manual transactions as critical', function (): void {

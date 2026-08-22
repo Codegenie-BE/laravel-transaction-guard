@@ -21,6 +21,12 @@ final class ClassMetadataIndex
     /** @var array<string, string> Queue name to forwarded connection. */
     private array $queueForwards = [];
 
+    /** @var array<string, array<string, string>> */
+    private array $notificationChannelConnections = [];
+
+    /** @var array<string, string> */
+    private array $modelConnections = [];
+
     /** @var array<string, list<string>> */
     private array $interfaceParents = [];
 
@@ -60,6 +66,58 @@ final class ClassMetadataIndex
         }
 
         return $this->queueConfiguredConnectionFor($class) ?? $this->queueRouteConnection($class);
+    }
+
+    /** @return array<string, string> */
+    public function notificationChannelConnections(string $class): array
+    {
+        $key = strtolower(ltrim($class, '\\'));
+        if (array_key_exists($key, $this->notificationChannelConnections)) {
+            return $this->notificationChannelConnections[$key];
+        }
+
+        $metadata = $this->metadata($class);
+        if ($metadata?->parent === null) {
+            return [];
+        }
+
+        return $this->notificationChannelConnections($metadata->parent);
+    }
+
+    public function modelConnection(string $class): ?string
+    {
+        $key = strtolower(ltrim($class, '\\'));
+        if (array_key_exists($key, $this->modelConnections)) {
+            return $this->modelConnections[$key];
+        }
+
+        $metadata = $this->metadata($class);
+        if ($metadata?->parent === null) {
+            return null;
+        }
+
+        return $this->modelConnection($metadata->parent);
+    }
+
+    public function isEloquentModel(string $class): bool
+    {
+        $seen = [];
+        $current = $this->metadata($class);
+
+        while ($current?->parent !== null) {
+            $parent = ltrim($current->parent, '\\');
+            $key = strtolower($parent);
+            if ($key === 'illuminate\\database\\eloquent\\model') {
+                return true;
+            }
+            if (isset($seen[$key])) {
+                return false;
+            }
+            $seen[$key] = true;
+            $current = $this->metadata($parent);
+        }
+
+        return false;
     }
 
     public function queueRouteConnection(string $class): ?string
@@ -246,6 +304,14 @@ final class ClassMetadataIndex
             $queueName = $constructorQueue ?? $attributeQueue ?? $propertyQueue;
             $afterCommitOverride = $constructorOverride ?? $propertyAfterCommit;
             $fqcn = $context->namespace !== '' ? $context->namespace.'\\'.$name : $name;
+            $notificationConnections = $this->notificationConnectionsForClass($tokens, $openBrace + 1, $closeBrace - 1, $source);
+            if ($notificationConnections !== null) {
+                $this->notificationChannelConnections[strtolower($fqcn)] = $notificationConnections;
+            }
+            $modelConnection = $this->modelConnectionForClass($source, $tokens, $i, $openBrace + 1, $closeBrace - 1, $context);
+            if ($modelConnection !== null) {
+                $this->modelConnections[strtolower($fqcn)] = $modelConnection;
+            }
 
             $this->classes[strtolower($fqcn)] = new ClassMetadata(
                 name: $fqcn,
@@ -355,6 +421,106 @@ final class ClassMetadataIndex
         }
 
         return array_values(array_unique($traits));
+    }
+
+    /**
+     * @param  list<Token>  $tokens
+     * @return array<string, string>|null
+     */
+    private function notificationConnectionsForClass(array $tokens, int $start, int $end, string $source): ?array
+    {
+        $depth = 0;
+        for ($i = $start; $i <= $end; $i++) {
+            $text = $tokens[$i]['text'];
+            if ($text === '{') {
+                $depth++;
+
+                continue;
+            }
+            if ($text === '}') {
+                $depth = max(0, $depth - 1);
+
+                continue;
+            }
+            if ($depth !== 0 || ($tokens[$i]['id'] ?? null) !== T_FUNCTION) {
+                continue;
+            }
+
+            $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING, $end);
+            if ($nameIndex === null || strcasecmp($tokens[$nameIndex]['text'], 'viaConnections') !== 0) {
+                continue;
+            }
+
+            $open = $this->nextText($tokens, $nameIndex + 1, '{', $end);
+            if ($open === null) {
+                return [];
+            }
+            $close = $this->matchingBrace($tokens, $open, $end);
+            if ($close === null) {
+                return [];
+            }
+
+            $bodyStart = $tokens[$open]['offset'] + 1;
+            $body = substr($source, $bodyStart, max(0, $tokens[$close]['offset'] - $bodyStart));
+            if (preg_match('/\breturn\s*\[(?<items>.*?)\]\s*;/s', $body, $match) !== 1) {
+                return [];
+            }
+
+            $result = [];
+            foreach ($this->splitTopLevelArguments($match['items']) as $entry) {
+                $parts = preg_split('/\s*=>\s*/', $entry, 2);
+                if (! is_array($parts) || count($parts) !== 2) {
+                    continue;
+                }
+                $channel = $this->literalString(trim($parts[0]));
+                if ($channel === null) {
+                    continue;
+                }
+                $result[$channel] = $this->literalString(trim($parts[1])) ?? '@dynamic';
+            }
+
+            return $result;
+        }
+
+        return null;
+    }
+
+    /** @param list<Token> $tokens */
+    private function modelConnectionForClass(
+        string $source,
+        array $tokens,
+        int $declarationIndex,
+        int $start,
+        int $end,
+        FileContext $context,
+    ): ?string {
+        $attribute = $this->stringAttributeForDeclaration(
+            $source,
+            $tokens[$declarationIndex]['offset'],
+            $context,
+            'Illuminate\\Database\\Eloquent\\Attributes\\Connection',
+            'connection',
+        );
+        if ($attribute !== null) {
+            return $attribute;
+        }
+
+        if ($start > $end || ! isset($tokens[$start], $tokens[$end])) {
+            return null;
+        }
+        $from = $tokens[$start]['offset'];
+        $to = $tokens[$end]['offset'] + strlen($tokens[$end]['text']);
+        $body = substr($source, $from, max(0, $to - $from));
+        if (preg_match('/\b(?:public|protected)\b(?:(?![;{]).)*?\$connection\s*=\s*([^;]+);/is', $body, $match) !== 1) {
+            return null;
+        }
+
+        $expression = trim($match[1]);
+        if (strcasecmp($expression, 'null') === 0) {
+            return null;
+        }
+
+        return $this->literalString($expression) ?? '@dynamic';
     }
 
     /**

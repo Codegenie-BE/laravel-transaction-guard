@@ -48,6 +48,7 @@ foreach ($cases as $name => $case) {
         disabledRules: (array) ($cfg['disabled_rules'] ?? []),
         detectReadHttpCalls: (bool) ($cfg['detect_read_http_calls'] ?? false),
         defaultDatabaseConnection: (string) ($cfg['database_default'] ?? '@default'),
+        databaseDriverByConnection: (array) ($cfg['database_drivers'] ?? []),
     );
 
     $index = ClassMetadataIndex::fromFiles([$phpFile]);

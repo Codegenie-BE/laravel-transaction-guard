@@ -78,6 +78,12 @@ Reports a lexical `beginTransaction()` without a matching `commit()` / `rollBack
 
 Prefer `DB::transaction()` where possible.
 
+## TG014 — unresolved transaction callback
+
+Reports an informational, low-confidence diagnostic when a `DB::transaction(...)` callback cannot be resolved as an inline closure or a simple local closure variable. The guard does not pretend that an unanalyzed callback is proven safe.
+
+Prefer an inline closure or simple local closure variable when practical; otherwise review the callback manually. The default `warning` failure threshold does not fail CI on this informational diagnostic.
+
 ## TG016 — synchronous job dispatch
 
 Synchronous jobs run immediately inside the current process while the transaction is open. If that job performs external effects or expects committed state, it is unsafe.
