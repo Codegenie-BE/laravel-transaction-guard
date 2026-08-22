@@ -52,7 +52,7 @@ if ($matrix === false) {
     throw new RuntimeException('Unable to read ScenarioMatrix.php');
 }
 
-$scenarioMarker = "    'global dispatch helper with unresolved class is reported' => [\n";
+$scenarioMarker = "    'afterCommit text inside string does not make dispatch safe' => [\n";
 $scenarios = <<<'PHP'
     'global dispatch helper with known non queueable class is synchronous' => [
         'code' => <<<'CODE'
