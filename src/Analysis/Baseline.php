@@ -6,14 +6,14 @@ namespace Codegenie\TransactionGuard\Analysis;
 
 final class Baseline
 {
-    /** @var array<string, true> */
-    private array $fingerprints = [];
+    /** @var array<string, int> */
+    private array $fingerprintCounts = [];
 
     /** @param iterable<string> $fingerprints */
     public function __construct(iterable $fingerprints = [])
     {
         foreach ($fingerprints as $fingerprint) {
-            $this->fingerprints[$fingerprint] = true;
+            $this->fingerprintCounts[$fingerprint] = ($this->fingerprintCounts[$fingerprint] ?? 0) + 1;
         }
     }
 
@@ -33,12 +33,37 @@ final class Baseline
             throw new \RuntimeException("Baseline [{$path}] must contain a JSON object.");
         }
 
-        $rawFingerprints = $decoded['fingerprints'] ?? [];
-        $fingerprints = is_array($rawFingerprints)
-            ? array_values(array_filter($rawFingerprints, 'is_string'))
-            : [];
+        $version = $decoded['version'] ?? 1;
+        if (! is_int($version) || ! in_array($version, [1, 2], true)) {
+            throw new \RuntimeException("Baseline [{$path}] uses an unsupported version.");
+        }
 
-        return new self($fingerprints);
+        $rawFingerprints = $decoded['fingerprints'] ?? [];
+        if (! is_array($rawFingerprints)) {
+            throw new \RuntimeException("Baseline [{$path}] must contain a fingerprints array or object.");
+        }
+
+        if ($version === 1) {
+            $fingerprints = [];
+            foreach ($rawFingerprints as $fingerprint) {
+                if (! is_string($fingerprint)) {
+                    throw new \RuntimeException("Baseline [{$path}] contains an invalid v1 fingerprint.");
+                }
+                $fingerprints[] = $fingerprint;
+            }
+
+            return new self($fingerprints);
+        }
+
+        $baseline = new self;
+        foreach ($rawFingerprints as $fingerprint => $count) {
+            if (! is_string($fingerprint) || ! is_int($count) || $count < 1) {
+                throw new \RuntimeException("Baseline [{$path}] contains an invalid v2 fingerprint count.");
+            }
+            $baseline->fingerprintCounts[$fingerprint] = $count;
+        }
+
+        return $baseline;
     }
 
     /** @param list<Finding> $findings */
@@ -49,14 +74,15 @@ final class Baseline
             throw new \RuntimeException("Unable to create baseline directory [{$directory}].");
         }
 
-        $fingerprints = array_values(array_unique(array_map(
-            static fn (Finding $finding): string => $finding->fingerprint(),
-            $findings,
-        )));
-        sort($fingerprints);
+        $fingerprints = [];
+        foreach ($findings as $finding) {
+            $fingerprint = $finding->fingerprint();
+            $fingerprints[$fingerprint] = ($fingerprints[$fingerprint] ?? 0) + 1;
+        }
+        ksort($fingerprints);
 
         $payload = [
-            'version' => 1,
+            'version' => 2,
             'generated_at' => gmdate(DATE_ATOM),
             'fingerprints' => $fingerprints,
         ];
@@ -67,8 +93,12 @@ final class Baseline
         }
     }
 
-    public function contains(Finding $finding): bool
+    public function contains(Finding $finding, int $occurrence = 1): bool
     {
-        return isset($this->fingerprints[$finding->fingerprint()]);
+        if ($occurrence < 1) {
+            throw new \InvalidArgumentException('Baseline occurrence must be at least 1.');
+        }
+
+        return ($this->fingerprintCounts[$finding->fingerprint()] ?? 0) >= $occurrence;
     }
 }
