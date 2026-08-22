@@ -48,12 +48,7 @@ if old not in text:
     raise SystemExit("class metadata argument marker not found")
 text = text.replace(old, new, 1)
 
-reference = subprocess.run(
-    ["git", "show", "origin/improve/03-connection-attribute:src/Analysis/ClassMetadataIndex.php"],
-    check=True,
-    capture_output=True,
-    text=True,
-).stdout
+reference = subprocess.run(["git", "show", "origin/improve/03-connection-attribute:src/Analysis/ClassMetadataIndex.php"], check=True, capture_output=True, text=True).stdout
 ref_start = reference.index("    private function queueAttributeForDeclaration(")
 ref_end = reference.index("    /**\n     * @param  list<Token>  $tokens\n     */\n    private function parseContext", ref_start)
 replacement = reference[ref_start:ref_end]
@@ -106,6 +101,7 @@ helpers = r'''    /** @param array<string, true> $seen */
         return $metadata->parent !== null ? $this->queueConfiguredConnectionFor($metadata->parent, $seen) : null;
     }
 
+    /** @param array<string, true> $seen */
 '''
 if marker not in text:
     raise SystemExit("queueNameFor marker not found")
