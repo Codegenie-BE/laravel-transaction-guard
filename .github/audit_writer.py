@@ -28,6 +28,10 @@ runpy.run_path(str(script), run_name="__main__")
 
 scanner = Path("src/Analysis/SourceScanner.php")
 text = scanner.read_text()
+early_sort = "            usort($this->preScanFindings, static fn (Finding $a, Finding $b): int => [$a->line, -$a->severity->value, $a->rule] <=> [$b->line, -$b->severity->value, $b->rule]);\n\n"
+if early_sort not in text:
+    raise SystemExit("pre-scan sort marker not found")
+text = text.replace(early_sort, "", 1)
 marker = '''        }
     }
 
