@@ -7,10 +7,14 @@ runpy.run_path(str(ROOT / 'tools/v040_safe_runner.py'), run_name='__main__')
 for relative in ['src/Analysis/ClassMetadata.php', 'src/Analysis/ClassMetadataIndex.php']:
     path = ROOT / relative
     source = path.read_text()
-    # Python string-literal interpolation in the deterministic patch can reduce
-    # a PHP single-quoted two-backslash literal to one backslash. Normalize the
-    # newly introduced trait ltrim() calls back to valid PHP source.
-    source = source.replace("ltrim($trait, '\\')", "ltrim($trait, '\\\\')")
+    # Non-raw Python replacement strings in the deterministic patch can reduce
+    # a valid PHP '\\' character-set literal to the invalid '\'. Normalize all
+    # newly introduced ltrim() variables that use a backslash character set.
+    for variable in ['$trait', '$class']:
+        source = source.replace(
+            f"ltrim({variable}, '\\')",
+            f"ltrim({variable}, '\\\\')",
+        )
     path.write_text(source)
 
 Path(__file__).unlink()
