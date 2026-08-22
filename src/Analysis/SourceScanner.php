@@ -672,7 +672,7 @@ final class SourceScanner
 
                 $explicitlyBeforeCommit = $this->statementContainsBeforeCommit($statement) || $metadata?->explicitlyBeforeCommit() === true;
                 if ($queued && ! $explicitlyBeforeCommit
-                    && ($this->statementContainsAfterCommit($statement) || $metadata?->queueAfterCommit() === true || $this->queueConnectionDispatchesAfterCommit($statement, $metadata))) {
+                    && ($this->statementContainsAfterCommit($statement) || $metadata->queueAfterCommit() === true || $this->queueConnectionDispatchesAfterCommit($statement, $metadata))) {
                     continue;
                 }
 
@@ -1134,32 +1134,38 @@ final class SourceScanner
             $groupEnd = null;
             $depth = 0;
 
-            $flush = function () use (&$regions, &$groupStart, &$groupEnd, &$depth): void {
-                if ($groupStart === null) {
+            /** @param array{type:string,offset:int,end:int,scope:string,connection:string}|null $start */
+            $flush = function (?array $start, ?int $endOffset) use (&$regions): void {
+                if ($start === null) {
+                    return;
+                }
+                if (! isset($start['offset'], $start['end'], $start['connection'])
+                    || ! is_int($start['offset'])
+                    || ! is_int($start['end'])
+                    || ! is_string($start['connection'])) {
                     return;
                 }
 
-                $end = $groupEnd ?? strlen($this->source);
+                $end = $endOffset ?? strlen($this->source);
                 $regions[] = [
-                    'start' => $groupStart['end'],
+                    'start' => $start['end'],
                     'end' => $end,
-                    'line' => $this->lineAtOffset($groupStart['offset']),
+                    'line' => $this->lineAtOffset($start['offset']),
                     'type' => 'manual',
                     'attempts' => 1,
-                    'connection' => $groupStart['connection'],
-                    'callableStart' => $groupStart['end'],
+                    'connection' => $start['connection'],
+                    'callableStart' => $start['end'],
                     'callableEnd' => $end,
                 ];
-
-                $groupStart = null;
-                $groupEnd = null;
-                $depth = 0;
             };
 
             foreach ($calls as $call) {
                 if ($call['type'] === 'begin') {
                     if ($groupStart !== null && $depth === 0) {
-                        $flush();
+                        $flush($groupStart, $groupEnd);
+                        $groupStart = null;
+                        $groupEnd = null;
+                        $depth = 0;
                     }
                     if ($groupStart === null) {
                         $groupStart = $call;
@@ -1179,7 +1185,7 @@ final class SourceScanner
                 }
             }
 
-            $flush();
+            $flush($groupStart, $groupEnd);
         }
 
         return $regions;
@@ -1439,10 +1445,12 @@ final class SourceScanner
     {
         $value = $match['matches'][$name] ?? '';
         if (is_array($value)) {
-            return (string) $value[0];
+            $captured = $value[0] ?? '';
+
+            return is_string($captured) ? $captured : '';
         }
 
-        return (string) $value;
+        return is_string($value) ? $value : '';
     }
 
     /** @return TransactionRegion|null */

@@ -999,6 +999,7 @@ final class ClassMetadataIndex
         return array_values(array_unique($traits));
     }
 
+    /** @param  array<string, true>  $seen */
     private function queueNameFor(string $class, array $seen = []): ?string
     {
         $key = strtolower(ltrim($class, '\\'));
