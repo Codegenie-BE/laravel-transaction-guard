@@ -89,7 +89,7 @@ config = config.replace(
 )
 config_path.write_text(config)
 
-# PHPStan knows Composer class-loader callable arrays are non-empty.
+# Generated metadata analyzer refinements.
 metadata_path = root / 'src/Analysis/ClassMetadataIndex.php'
 metadata = metadata_path.read_text()
 metadata = metadata.replace(
@@ -97,6 +97,22 @@ metadata = metadata.replace(
     "$loader = is_array($autoload) ? $autoload[0] : null;",
     1,
 )
+# The enum table is correct; resolve a simple attribute argument with the same
+# literal/enum resolver instead of relying on a second fragile enum-only regex.
+literal_start = metadata.find("                $literal = '/(?:^|,)\\s*'.$name")
+generic_marker = "                if (preg_match('/(?:^|,)\\s*'.$name.'\\s*\\(/s', $block['attributes']) === 1) {\n                    return '@dynamic';\n                }"
+if literal_start >= 0:
+    generic_end = metadata.find(generic_marker, literal_start)
+    if generic_end < 0:
+        raise RuntimeError('attribute generic marker not found')
+    generic_end += len(generic_marker)
+    replacement = """                $expressionPattern = '/(?:^|,)\\s*'.$name.'\\s*\\(\\s*(?:'.preg_quote($argumentName, '/').'\\s*:\\s*)?(?<expression>[^,)]+)\\s*\\)/s';
+                if (preg_match($expressionPattern, $block['attributes'], $attribute) === 1) {
+                    return $this->literalStringOrEnum(trim($attribute['expression']), $context) ?? '@dynamic';
+                }"""
+    metadata = metadata[:literal_start] + replacement + metadata[generic_end:]
+else:
+    raise RuntimeError('attribute literal parser start not found')
 metadata_path.write_text(metadata)
 
 # TransactionGuard lives one namespace above Analysis; import the canonical catalog.
