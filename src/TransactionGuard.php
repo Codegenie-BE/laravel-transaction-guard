@@ -29,12 +29,20 @@ final class TransactionGuard
         $index = ClassMetadataIndex::fromFiles($files);
         $scanner = new SourceScanner($index, $this->config);
         $findings = [];
+        $baselineOccurrences = [];
 
         foreach ($files as $file) {
             foreach ($scanner->scan($file) as $finding) {
-                if ($baseline?->contains($finding) === true) {
-                    continue;
+                if ($baseline !== null) {
+                    $fingerprint = $finding->fingerprint();
+                    $occurrence = ($baselineOccurrences[$fingerprint] ?? 0) + 1;
+                    $baselineOccurrences[$fingerprint] = $occurrence;
+
+                    if ($baseline->contains($finding, $occurrence)) {
+                        continue;
+                    }
                 }
+
                 $findings[] = $finding;
             }
         }
