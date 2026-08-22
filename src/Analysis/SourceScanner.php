@@ -168,6 +168,18 @@ final class SourceScanner
                 $method = $this->captured($match, 'method');
                 $statement = $this->statementAt($offset);
                 $globalDispatchHelper = $method === '';
+                $standardDispatch = $globalDispatchHelper || in_array($method, ['dispatch', 'dispatchIf', 'dispatchUnless'], true);
+                $jobNamespace = str_contains(strtolower($resolved), '\\jobs\\') || preg_match('/\\\\Jobs\\\\/', $resolved) === 1;
+                if ($standardDispatch && $metadata !== null && ! $metadata->queued() && ($globalDispatchHelper || $jobNamespace)) {
+                    $this->appendFinding($findings, $offset, 'TG016', Severity::Warning,
+                        "Dispatch of non-queueable [{$this->basename($resolved)}] executes synchronously while the database transaction is open.",
+                        'Move synchronous work outside the transaction when it can observe committed state or produce irreversible effects.',
+                        'high', ['transaction_type' => $tx['type'], 'database_connection' => $tx['connection']]);
+                    $this->appendRetryFinding($findings, $offset, $tx, 'synchronous job dispatch');
+
+                    continue;
+                }
+
                 $looksLikeJob = ($globalDispatchHelper && $metadata === null)
                     || $metadata?->queued() === true
                     || str_contains(strtolower($resolved), '\\jobs\\')
