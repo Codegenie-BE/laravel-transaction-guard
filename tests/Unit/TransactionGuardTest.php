@@ -67,3 +67,40 @@ PHP);
         @rmdir($root);
     }
 });
+
+it('does not hide a newly added identical finding behind one baseline occurrence', function (): void {
+    $root = sys_get_temp_dir().'/transaction-guard-baseline-occurrence-'.bin2hex(random_bytes(4));
+    mkdir($root, 0777, true);
+    $file = $root.'/Unsafe.php';
+    file_put_contents($file, <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () {
+    Http::post('https://example.test/capture');
+    Http::post('https://example.test/capture');
+});
+PHP);
+
+    try {
+        $guard = new TransactionGuard(new AnalysisConfig);
+        $raw = $guard->analyze([$root]);
+        $httpFindings = array_values(array_filter(
+            $raw->findings,
+            static fn ($finding): bool => $finding->rule === 'TG006',
+        ));
+        expect($httpFindings)->toHaveCount(2);
+
+        $baseline = new Baseline([$httpFindings[0]->fingerprint()]);
+        $filtered = $guard->analyze([$root], [], $baseline);
+        $remainingHttpFindings = array_values(array_filter(
+            $filtered->findings,
+            static fn ($finding): bool => $finding->rule === 'TG006',
+        ));
+
+        expect($remainingHttpFindings)->toHaveCount(1);
+    } finally {
+        @unlink($file);
+        @rmdir($root);
+    }
+});
