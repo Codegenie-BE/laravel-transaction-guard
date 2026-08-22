@@ -33,20 +33,71 @@ it('changes fingerprints when the rule, file or normalized snippet changes', fun
         ->and(sampleFinding('/app/Order.php', 'Mail::send($m);')->fingerprint())->not->toBe($base);
 });
 
-it('writes and loads a baseline', function (): void {
+it('writes v2 occurrence counts and loads them', function (): void {
     $dir = sys_get_temp_dir().'/transaction-guard-baseline-'.bin2hex(random_bytes(4));
     $path = $dir.'/baseline.json';
     $finding = sampleFinding();
 
     try {
-        Baseline::write($path, [$finding]);
+        Baseline::write($path, [$finding, $finding]);
+        $decoded = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
         $baseline = Baseline::load($path);
 
-        expect($baseline->contains($finding))->toBeTrue();
+        expect($decoded['version'])->toBe(2)
+            ->and($decoded['fingerprints'][$finding->fingerprint()])->toBe(2)
+            ->and($baseline->contains($finding))->toBeTrue()
+            ->and($baseline->contains($finding, 2))->toBeTrue()
+            ->and($baseline->contains($finding, 3))->toBeFalse();
     } finally {
         @unlink($path);
         @rmdir($dir);
     }
+});
+
+it('loads legacy v1 baselines', function (): void {
+    $dir = sys_get_temp_dir().'/transaction-guard-baseline-v1-'.bin2hex(random_bytes(4));
+    $path = $dir.'/baseline.json';
+    $finding = sampleFinding();
+    mkdir($dir, 0777, true);
+
+    try {
+        file_put_contents($path, json_encode([
+            'version' => 1,
+            'fingerprints' => [$finding->fingerprint()],
+        ], JSON_THROW_ON_ERROR));
+
+        $baseline = Baseline::load($path);
+
+        expect($baseline->contains($finding))->toBeTrue()
+            ->and($baseline->contains($finding, 2))->toBeFalse();
+    } finally {
+        @unlink($path);
+        @rmdir($dir);
+    }
+});
+
+it('rejects unsupported baseline versions', function (): void {
+    $dir = sys_get_temp_dir().'/transaction-guard-baseline-version-'.bin2hex(random_bytes(4));
+    $path = $dir.'/baseline.json';
+    mkdir($dir, 0777, true);
+
+    try {
+        file_put_contents($path, json_encode([
+            'version' => 99,
+            'fingerprints' => [],
+        ], JSON_THROW_ON_ERROR));
+
+        expect(fn (): Baseline => Baseline::load($path))
+            ->toThrow(RuntimeException::class, 'unsupported version');
+    } finally {
+        @unlink($path);
+        @rmdir($dir);
+    }
+});
+
+it('rejects invalid occurrence indexes', function (): void {
+    expect(fn (): bool => (new Baseline)->contains(sampleFinding(), 0))
+        ->toThrow(InvalidArgumentException::class);
 });
 
 it('treats a missing baseline as empty', function (): void {
