@@ -66,21 +66,19 @@ These concepts must not be conflated:
 
 ## Manual and nested transactions
 
-Manual `beginTransaction()` / `commit()` / `rollBack()` flows are harder to prove statically because branches and exception paths can differ. Transaction Guard scopes manual transaction state per function/closure and reports obvious unclosed transactions, while remaining conservative for branch-heavy control flow.
+Manual `beginTransaction()` / `commit()` / `rollBack()` flows are harder to prove statically because branches and exception paths can differ. Transaction Guard scopes manual transaction state per function/closure and database connection and reports obvious unclosed transactions, while remaining conservative for branch-heavy control flow.
 
 Nested `DB::transaction()` calls also inherit retry risk from a retryable outer transaction: if the outer callback is retried, a nested non-transactional side effect can repeat too.
 
 ## Laravel 13 queue routing
 
-Laravel 13 can route jobs by exact class, parent class, interface, or trait. The guard resolves literal single-target `Queue::route()` class/parent/interface routes and preserves the important precedence that an explicit job connection beats the route. Dynamic route values are treated conservatively rather than guessed.
+Laravel 13 can route jobs by exact class, parent class, interface, or trait. The guard resolves statically known `Queue::route()` targets across those relationships, `Queue::forward()` mappings, and queue metadata that can be proven from attributes or constructors. An explicit job connection continues to take precedence over a route.
 
-For multi-class route arrays, v0.1 deliberately does **not** infer a safe connection. As verified on August 21, 2026, Laravel 13's published queue documentation shows array values as `[queue, connection]`, while the current `QueueRoutes` framework implementation reads the first array element as the connection. Until that upstream contract is unambiguous, treating the route as dynamic avoids a false claim of transaction safety.
-
-Trait-based routes, route arrays, `Queue::forward()`, enum-valued dynamic routes, and every possible runtime mutation of queue configuration are intentionally not claimed as fully resolved in the initial release.
+There is an upstream documentation/runtime discrepancy for multi-class route arrays: the Laravel 13 documentation describes array values as `[queue, connection]`, while the current `QueueRoutes` implementation stores the provided array directly and reads element `0` as connection and element `1` as queue. Transaction Guard models the current framework runtime semantics, not the contradictory prose example, and keeps unresolved or enum/dynamic values conservative instead of inventing safety.
 
 ## Observer/event indirection
 
-An Eloquent observer or arbitrary synchronous event listener can hide side effects outside the lexical transaction body. Full interprocedural call-graph analysis is outside the v0.1 scope. Laravel observers that require post-commit handling should use Laravel's post-commit observer contract; project-specific hidden gateways can be covered with `custom_side_effect_patterns` until deeper call-graph support exists.
+An Eloquent observer or arbitrary synchronous event listener can hide side effects outside the lexical transaction body. Full interprocedural call-graph analysis is outside the current scope. Laravel observers that require post-commit handling should use Laravel's post-commit observer contract; project-specific hidden gateways can be covered with `custom_side_effect_patterns` until deeper call-graph support exists.
 
 ## Analyzer safety properties
 
@@ -96,10 +94,9 @@ Transaction Guard itself:
 
 This makes the package suitable for local development and CI without becoming a production runtime dependency.
 
-
 ## v0.2 analyzer hardening
 
-The analyzer hot path now pre-indexes source lines and non-code token ranges, caches statement/facade lookups, uses binary-search token/line lookup, and avoids temporary filter/sort allocations when selecting transaction/callable regions. Directory discovery prunes excluded directories before descending into them.
+The analyzer hot path pre-indexes source lines and non-code token ranges, caches statement/facade lookups, uses binary-search token/line lookup, and avoids temporary filter/sort allocations when selecting transaction/callable regions. Files with no detected database transaction return immediately after transaction discovery, before any side-effect rule scans run. Directory discovery prunes excluded directories before descending into them.
 
 Laravel 13 queue metadata follows the runtime resolver more closely: exact classes, parents, expanded interfaces, recursive traits, route arrays, queue forwarding and `#[Queue]`/constructor queue names are modeled when statically resolvable. Raw queue pushes are treated separately because driver `pushRaw()` paths bypass Laravel's job-aware `enqueueUsing()` after-commit decision.
 
