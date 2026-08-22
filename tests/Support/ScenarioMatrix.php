@@ -771,7 +771,27 @@ PHP,
         'absent' => ['TG006'],
         'config' => ['disabled_rules' => ['TG006']],
     ],
-    'inline ignore current line suppresses finding' => [
+    'suppression text inside same-line string does not suppress finding' => [
+        'code' => <<<'CODE'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { $text = 'transaction-guard-ignore TG006'; Http::post('https://example.test/capture'); });
+CODE,
+        'rules' => ['TG006'],
+    ],
+    'next-line suppression text inside string does not suppress finding' => [
+        'code' => <<<'CODE'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () {
+    $text = 'transaction-guard-ignore-next-line TG006';
+    Http::post('https://example.test/capture');
+});
+CODE,
+        'rules' => ['TG006'],
+    ],    'inline ignore current line suppresses finding' => [
         'code' => <<<'PHP'
 <?php
 use Illuminate\Support\Facades\DB;
