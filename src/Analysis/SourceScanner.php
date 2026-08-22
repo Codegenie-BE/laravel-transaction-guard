@@ -416,7 +416,6 @@ final class SourceScanner
                     continue;
                 }
 
-
             }
         }
 
