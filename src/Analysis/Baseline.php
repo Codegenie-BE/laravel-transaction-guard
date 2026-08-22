@@ -29,9 +29,16 @@ final class Baseline
         }
 
         $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
-        $fingerprints = is_array($decoded['fingerprints'] ?? null) ? $decoded['fingerprints'] : [];
+        if (! is_array($decoded)) {
+            throw new \RuntimeException("Baseline [{$path}] must contain a JSON object.");
+        }
 
-        return new self(array_values(array_filter($fingerprints, 'is_string')));
+        $rawFingerprints = $decoded['fingerprints'] ?? [];
+        $fingerprints = is_array($rawFingerprints)
+            ? array_values(array_filter($rawFingerprints, 'is_string'))
+            : [];
+
+        return new self($fingerprints);
     }
 
     /** @param list<Finding> $findings */
