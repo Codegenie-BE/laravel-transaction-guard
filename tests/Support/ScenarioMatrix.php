@@ -759,6 +759,43 @@ PHP,
         'rules' => [],
         'absent' => ['TG006'],
     ],
+    'tap callback executes eagerly inside transaction' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { tap('value', function () { Http::post('https://example.test/capture'); }); });
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'retry callback executes eagerly inside transaction' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { retry(2, function () { Http::post('https://example.test/capture'); }); });
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'array map callback executes eagerly inside transaction' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { array_map(function ($id) { Http::post('https://example.test/capture'); }, [1]); });
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'assigned nested closure remains deferred' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { $later = function () { Http::post('https://example.test/capture'); }; });
+PHP,
+        'rules' => [],
+        'absent' => ['TG006'],
+    ],
     'IIFE side effect is detected' => [
         'code' => <<<'PHP'
 <?php
