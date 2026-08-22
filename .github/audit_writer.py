@@ -48,72 +48,17 @@ if old not in text:
     raise SystemExit("class metadata argument marker not found")
 text = text.replace(old, new, 1)
 
+reference = subprocess.run(
+    ["git", "show", "origin/improve/03-connection-attribute:src/Analysis/ClassMetadataIndex.php"],
+    check=True,
+    capture_output=True,
+    text=True,
+).stdout
+ref_start = reference.index("    private function queueAttributeForDeclaration(")
+ref_end = reference.index("    /**\n     * @param  list<Token>  $tokens\n     */\n    private function parseContext", ref_start)
+replacement = reference[ref_start:ref_end]
 start = text.index("    private function queueAttributeForDeclaration(")
 end = text.index("    /**\n     * @param  list<Token>  $tokens\n     */\n    private function parseContext", start)
-replacement = r'''    private function queueAttributeForDeclaration(string $source, int $declarationOffset, FileContext $context): ?string
-    {
-        return $this->stringAttributeForDeclaration(
-            $source,
-            $declarationOffset,
-            $context,
-            'Illuminate\\Queue\\Attributes\\Queue',
-            'queue',
-        );
-    }
-
-    private function connectionAttributeForDeclaration(string $source, int $declarationOffset, FileContext $context): ?string
-    {
-        return $this->stringAttributeForDeclaration(
-            $source,
-            $declarationOffset,
-            $context,
-            'Illuminate\\Queue\\Attributes\\Connection',
-            'connection',
-        );
-    }
-
-    private function stringAttributeForDeclaration(
-        string $source,
-        int $declarationOffset,
-        FileContext $context,
-        string $attributeClass,
-        string $argumentName,
-    ): ?string {
-        $prefixStart = max(0, $declarationOffset - 1500);
-        $prefix = substr($source, $prefixStart, $declarationOffset - $prefixStart);
-        if (preg_match('/(?<blocks>(?:#\\[[^\\]]+\\]\\s*)+)(?:(?:abstract|final|readonly)\\s+)*$/s', $prefix, $match) !== 1) {
-            return null;
-        }
-
-        $aliases = ['\\\\'.ltrim($attributeClass, '\\\\')];
-        foreach ($context->imports as $alias => $import) {
-            if (strcasecmp(ltrim($import, '\\\\'), ltrim($attributeClass, '\\\\')) === 0) {
-                $aliases[] = $alias;
-            }
-        }
-
-        $count = preg_match_all('/#\\[(?<attributes>[^\\]]+)\\]/s', $match['blocks'], $blocks, PREG_SET_ORDER);
-        if ($count === false || $count === 0) {
-            return null;
-        }
-
-        foreach ($blocks as $block) {
-            foreach (array_values(array_unique($aliases)) as $alias) {
-                $name = preg_quote($alias, '/');
-                $literal = '/(?:^|,)\\s*'.$name.'\\s*\\(\\s*(?:'.preg_quote($argumentName, '/').'\\s*:\\s*)?([\\'\\"])(.*?)\\1\\s*\\)/s';
-                if (preg_match($literal, $block['attributes'], $attribute) === 1) {
-                    return stripcslashes($attribute[2]);
-                }
-                if (preg_match('/(?:^|,)\\s*'.$name.'\\s*\\(/s', $block['attributes']) === 1) {
-                    return '@dynamic';
-                }
-            }
-        }
-
-        return null;
-    }
-
-'''
 text = text[:start] + replacement + text[end:]
 
 old = """                constructorQueueConnection: $metadata->constructorQueueConnection,\n                traits: $metadata->traits,\n"""
