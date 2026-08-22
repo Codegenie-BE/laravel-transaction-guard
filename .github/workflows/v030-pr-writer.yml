@@ -31,46 +31,11 @@ jobs:
           coverage: xdebug
           tools: composer:v2
 
-      - name: Apply deterministic hardening patch
-        run: python3 tools/v030_patch_runner.py
+      - name: Apply final v0.3.0 patch
+        run: python3 tools/v030_finalize.py
 
-      - name: Lint generated core source
-        shell: bash
-        run: |
-          if ! php -l src/Analysis/Finding.php; then
-            nl -ba src/Analysis/Finding.php
-            exit 1
-          fi
-          find src -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
-
-      - name: Trace enum connection metadata
-        shell: bash
-        run: |
-          php <<'PHP'
-          <?php
-          require 'src/Analysis/ClassMetadata.php';
-          require 'src/Analysis/FileContext.php';
-          require 'src/Analysis/ClassMetadataIndex.php';
-          $source = <<<'CODE'
-          <?php
-          namespace App\Jobs;
-          use Illuminate\Contracts\Queue\ShouldQueue;
-          use Illuminate\Queue\Attributes\Connection;
-          enum QueueConnection: string { case Redis = 'redis'; }
-          #[Connection(QueueConnection::Redis)]
-          class ProcessOrder implements ShouldQueue {}
-          CODE;
-          $file = tempnam(sys_get_temp_dir(), 'tg-enum-').'.php';
-          file_put_contents($file, $source);
-          $index = Codegenie\TransactionGuard\Analysis\ClassMetadataIndex::fromFiles([$file]);
-          $metadata = $index->metadata('App\\Jobs\\ProcessOrder');
-          fwrite(STDOUT, 'attribute='.var_export($metadata?->queueConnectionAttribute, true).PHP_EOL);
-          fwrite(STDOUT, 'resolved='.var_export($index->queueConnection('App\\Jobs\\ProcessOrder'), true).PHP_EOL);
-          $reflection = new ReflectionClass($index);
-          $property = $reflection->getProperty('enumCaseValues');
-          fwrite(STDOUT, 'enums='.json_encode($property->getValue($index), JSON_UNESCAPED_SLASHES).PHP_EOL);
-          @unlink($file);
-          PHP
+      - name: Lint source
+        run: find src -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 
       - name: Install dependencies
         run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
@@ -84,14 +49,29 @@ jobs:
       - name: Validate coverage
         run: composer test:coverage
 
-      - name: Commit validated source changes
+      - name: Commit validated final changes
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add CHANGELOG.md README.md composer.json config docs src tests tools
+          git add .github CHANGELOG.md README.md composer.json config docs src tests tools
           if git diff --cached --quiet; then
-            echo 'No source changes to commit.'
-            exit 0
+            echo 'No final source changes to commit.'
+          else
+            git commit -m 'release: finalize v0.3.0 hardening'
+            git push origin HEAD:release/v0.3.0-hardening
           fi
-          git commit -m 'release: v0.3.0 analyzer reliability hardening'
-          git push origin HEAD:release/v0.3.0-hardening
+
+      - name: Remove superseded audit branches
+        shell: bash
+        run: |
+          for branch in \
+            audit/10-notification-via-connections \
+            audit/v020-finalize \
+            fix/global-dispatch-detection \
+            fix/global-dispatch-detection-v2 \
+            improve/03-connection-attribute \
+            improve/05-branch-aware-manual-transactions \
+            release/v0.2.0-hardening
+          do
+            git push origin --delete "$branch" 2>/dev/null || true
+          done
