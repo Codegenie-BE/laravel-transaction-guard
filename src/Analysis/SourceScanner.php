@@ -1527,64 +1527,6 @@ final class SourceScanner
         return false;
     }
 
-    private function callArgumentContainsPreference(string $statement, string $callMethod, string $preference): bool
-    {
-        if (preg_match('/::\s*'.preg_quote($callMethod, '/').'\s*\(/i', $statement, $match, PREG_OFFSET_CAPTURE) !== 1) {
-            return false;
-        }
-
-        $matched = $match[0][0];
-        $matchedOffset = $match[0][1];
-        $open = $matchedOffset + strlen($matched) - 1;
-        $depth = 0;
-        $quote = null;
-        $escaped = false;
-        $length = strlen($statement);
-
-        for ($i = $open; $i < $length; $i++) {
-            $char = $statement[$i];
-            if ($quote !== null) {
-                if ($escaped) {
-                    $escaped = false;
-
-                    continue;
-                }
-                if ($char === '\\') {
-                    $escaped = true;
-
-                    continue;
-                }
-                if ($char === $quote) {
-                    $quote = null;
-                }
-
-                continue;
-            }
-            if ($char === '\'' || $char === '"') {
-                $quote = $char;
-
-                continue;
-            }
-            if ($char === '(') {
-                $depth++;
-
-                continue;
-            }
-            if ($char !== ')') {
-                continue;
-            }
-
-            $depth--;
-            if ($depth === 0) {
-                $arguments = substr($statement, $open + 1, $i - $open - 1);
-
-                return preg_match('/->\s*'.preg_quote($preference, '/').'\s*\(/i', $arguments) === 1;
-            }
-        }
-
-        return false;
-    }
-
     private function statementContainsBeforeCommit(string $statement): bool
     {
         return preg_match('/->\s*beforeCommit\s*\(/i', $statement) === 1;
