@@ -768,7 +768,7 @@ final class SourceScanner
             }
         }
 
-        foreach ($this->matches('/->\s*request\s*\(\s*[\'\"](?P<method>POST|PUT|PATCH|DELETE)[\'\"]/i') as $match) {
+        foreach ($this->matches('/->\s*request\s*\(\s*[\'\"](?P<method>POST|PUT|PATCH|DELETE)[\'\"]/i', ['method']) as $match) {
             $offset = $match['offset'];
             $tx = $this->eligibleTransaction($offset);
             if ($tx === null) {
@@ -873,7 +873,7 @@ final class SourceScanner
             }
 
             $commandPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*command\s*\(\s*[\'\"](?P<command>SET|SETEX|PSETEX|MSET|DEL|UNLINK|INCR|INCRBY|DECR|DECRBY|HSET|HMSET|HDEL|LPUSH|RPUSH|SADD|SREM|ZADD|ZREM|EXPIRE|PEXPIRE|PERSIST|FLUSHDB|FLUSHALL|PUBLISH|XADD|XDEL)[\'\"]/i';
-            foreach ($this->matches($commandPattern) as $match) {
+            foreach ($this->matches($commandPattern, ['command']) as $match) {
                 $offset = $match['offset'];
                 $tx = $this->eligibleTransaction($offset);
                 if ($tx === null) {
@@ -1420,7 +1420,7 @@ final class SourceScanner
     }
 
     /** @return list<array{offset:int,matches:array<int|string,array{0:string,1:int}|string>}> */
-    private function matches(string $pattern): array
+    private function matches(string $pattern, array $allowNonCodeCaptures = []): array
     {
         $result = [];
         $ok = @preg_match_all($pattern, $this->source, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
@@ -1430,7 +1430,7 @@ final class SourceScanner
 
         foreach ($matches as $match) {
             $offset = $match[0][1];
-            if ($this->offsetIsNonCode($offset) || $this->semanticCaptureIsNonCode($match)) {
+            if ($this->offsetIsNonCode($offset) || $this->semanticCaptureIsNonCode($match, $allowNonCodeCaptures)) {
                 continue;
             }
             $result[] = ['offset' => $offset, 'matches' => $match];
@@ -1439,10 +1439,17 @@ final class SourceScanner
         return $result;
     }
 
+
     /** @param array<int|string, mixed> $match */
-    private function semanticCaptureIsNonCode(array $match): bool
+    private function semanticCaptureIsNonCode(array $match, array $allowNonCodeCaptures = []): bool
     {
+        $allowed = array_fill_keys($allowNonCodeCaptures, true);
+
         foreach (['method', 'class', 'fn', 'command'] as $name) {
+            if (isset($allowed[$name])) {
+                continue;
+            }
+
             $capture = $match[$name] ?? null;
             if (! is_array($capture)) {
                 continue;
@@ -1456,6 +1463,7 @@ final class SourceScanner
 
         return false;
     }
+
 
     private function offsetIsNonCode(int $offset): bool    {
         return $this->sourceIndex->isNonCode($offset);
