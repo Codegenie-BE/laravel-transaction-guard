@@ -32,28 +32,39 @@ jobs:
           coverage: xdebug
           tools: composer:v2
 
-      - name: Apply v0.4.0 patch
-        run: python3 tools/v040_patch.py
+      - name: Apply and validate v0.4.0
+        id: gate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            python3 tools/v040_patch.py &&
+            find src tests tools -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null &&
+            composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress &&
+            composer format &&
+            composer check:all &&
+            composer test:coverage
+          } 2>&1 | tee /tmp/v040-validation.log
 
-      - name: Lint PHP source
-        run: find src tests tools -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
-
-      - name: Install dependencies
-        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-
-      - name: Format
-        run: composer format
-
-      - name: Run complete quality gate
-        run: composer check:all
-
-      - name: Enforce coverage
-        run: composer test:coverage
-
-      - name: Commit validated v0.4.0 source
+      - name: Commit validation result
+        if: always()
+        shell: bash
+        env:
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if [ "${GATE_OUTCOME}" != "success" ]; then
+            git reset --hard HEAD
+            tail -n 300 /tmp/v040-validation.log > .v040-status
+            git add .v040-status
+            git commit -m 'chore: record v0.4.0 validation failure'
+            git push origin HEAD:release/v0.4.0-hardening
+            exit 1
+          fi
+
+          rm -f .v040-status
           git add -A -- . ':!.github/workflows/v040-maintenance.yml'
           if git diff --cached --quiet; then
             echo 'No validated source changes to commit.'
