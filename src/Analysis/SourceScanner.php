@@ -1635,7 +1635,7 @@ final class SourceScanner
     /** @return list<string> */
     private function newClassesFromStatement(string $statement): array
     {
-        $result = preg_match_all('/\bnew\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)/', $statement, $matches);
+        $result = preg_match_all('/\bnew\s+(\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)/', $statement, $matches);
         if ($result === false || $result === 0) {
             return [];
         }
