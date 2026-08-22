@@ -159,7 +159,9 @@ final class SourceScanner
                 $metadata = $this->classIndex->metadata($resolved);
                 $method = $this->captured($match, 'method');
                 $statement = $this->statementAt($offset);
-                $looksLikeJob = $metadata?->queued() === true
+                $globalDispatchHelper = $method === '';
+                $looksLikeJob = ($globalDispatchHelper && $metadata === null)
+                    || $metadata?->queued() === true
                     || str_contains(strtolower($resolved), '\\jobs\\')
                     || preg_match('/\\\\Jobs\\\\/', $resolved) === 1;
 
