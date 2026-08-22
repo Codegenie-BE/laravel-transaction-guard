@@ -121,11 +121,19 @@ old = """    /** @param array{matches:array<int|string,mixed>} $match */
 new = """    /** @param array{offset:int,matches:array<int|string,mixed>} $match */
     private function captured(array $match, string $name): string
     {
-        $this->context = $this->classIndex->contextFor($this->file, $match['offset']);
         $value = $match['matches'][$name] ?? '';
 """
 if old not in scanner:
     raise RuntimeError('SourceScanner captured() generated anchor missing')
-scanner_path.write_text(scanner.replace(old, new, 1))
+scanner = scanner.replace(old, new, 1)
 
-print('v0.3.0 final namespace/release patch applied with PHPStan cleanup')
+# Resolve captured class names with the context at the actual match offset.
+# Do not rely on captured() mutating $this->context during argument evaluation:
+# PHP resolves the method receiver before evaluating its argument expression.
+scanner = scanner.replace(
+    "$this->context->resolve($this->captured($match, 'class'))",
+    "$this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'))",
+)
+scanner_path.write_text(scanner)
+
+print('v0.3.0 final namespace/release patch applied with PHPStan and match-context cleanup')
