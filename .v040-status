@@ -1,4 +1,9 @@
 v0.4.0 hardening patch applied
+V040_TRANSFORMED_METHODS=scanJobDispatches,scanQueuedClosureDispatches,scanPendingChains,scanBusAndQueue,scanEvents,scanMail,scanNotifications,scanBroadcasts,scanVariablePayloadEffects,scanVariableFrameworkPayloads,reportVariableJobPayload,localNewClassForVariable,nextSignificantToken,scanVariableFacadeHandles,localModelConnectionForVariable,eloquentConnectionFromStatement,scanImplicitCommits,implicitCommitSeverity,scanCustomPatterns,scanManualTransactionBalance,findClosureTransactions,findManualTransactions,manualControlCalls,manualTerminalCloses,conditionalControlScopeAt,openingBraceStartsConditionalBlock,previousSignificantToken,matchingOpeningToken,callableScopeAt,dbTransactionCallOffsets,dbTransactionCalls,connectionFromExpression,findAfterCommitCallbacks,findCallableRegions,closureWithin,localClosureForVariableBefore,transactionAttemptsFromCall,transactionAttempts,sourceContainsAny,matches,semanticCaptureIsNonCode,offsetIsNonCode,captured,eligibleTransaction,transactionAt,isDeferredNestedCallable,nestedCallableRunsEagerly,isInsideAfterCommitCallback,appendPendingDispatchLifecycleFindings,conditionalDispatchIsSkipped,jobDispatchIsAfterCommitSafe,notificationDispatchIsAfterCommitSafe,queueConnectionDispatchesAfterCommit,queueConnectionFromStatement,literalStringArgumentFromCall,statementContainsAfterCommit,callArgumentContainsPreference,statementContainsBeforeCommit,statementContainsAfterResponse,newClassFromStatement,newClassesFromStatement,codeOnlyFragment,facadeStaticMethodPattern,facadeAliases,appendExplicitBeforeCommitFinding,appendFinding,appendRetryFinding,retryableTransactionAt,suppressed,indexSuppressionComments,suppressionDirectiveMatches,isGlobalFunctionCall,capturedMethodIsTopLevel,manualRegionHasEarlyExit,capturedTokenTextAt,statementAt,statementEnd,basename,lineAtOffset,tokenize,tokenIndexAtOrAfter,tokenIndexContainingOrAfterOffset,tokenIndexBeforeOffset,nextTokenText,matchingToken,arrowExpressionEnd
+V040_MARKER_scanFilesystem=-1
+V040_MARKER_scanProcesses=-1
+V040_MARKER_scanConcurrency=-1
+V040_MARKER_scanCrossConnectionDatabaseWrites=-1
 Traceback (most recent call last):
   File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_final_runner.py", line 82, in <module>
     start, end = method_region(source, 'scanCache', 'scanRedis')
@@ -15,6 +20,6 @@ Traceback (most recent call last):
   File "<frozen runpy>", line 286, in run_path
   File "<frozen runpy>", line 98, in _run_module_code
   File "<frozen runpy>", line 88, in _run_code
-  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_final_runner.py", line 86, in <module>
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_final_runner.py", line 96, in <module>
     raise RuntimeError('scanRedis method not found while inserting cache scanner')
 RuntimeError: scanRedis method not found while inserting cache scanner
