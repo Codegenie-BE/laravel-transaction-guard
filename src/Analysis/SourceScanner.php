@@ -879,9 +879,9 @@ final class SourceScanner
         $mutations = 'insert|insertGetId|insertOrIgnore|insertUsing|update|updateOrInsert|upsert|delete|truncate|increment|decrement|statement|unprepared|affectingStatement';
 
         foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\DB', 'DB') as $alias) {
-            $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\((?P<connection>[^;]*?)\)\s*->(?:(?![;{}]).)*?\b(?P<method>'.$mutations.')\s*\(/is';
+            $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*(?P<quote>[\'\"])(?P<connection>[^\'\"]+)\k<quote>\s*\)\s*->(?:(?![;{}]).)*?\b(?P<method>'.$mutations.')\s*\(/is';
             foreach ($this->matches($connectionPattern) as $match) {
-                $this->reportCrossConnectionWrite($findings, $match['offset'], $this->connectionFromExpression($this->captured($match, 'connection')));
+                $this->reportCrossConnectionWrite($findings, $match['offset'], $this->captured($match, 'connection'));
             }
 
             $builderPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*table\s*\((?:(?![;{}]).)*?\)(?:(?![;{}]).)*?\b(?P<method>'.$mutations.')\s*\(/is';
