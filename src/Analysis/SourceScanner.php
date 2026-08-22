@@ -1642,6 +1642,7 @@ final class SourceScanner
 
         return array_values(array_unique($matches[1]));
     }
+
     /** @return list<string> */
     private function facadeAliases(string $fqcn, string $fallback): array
     {

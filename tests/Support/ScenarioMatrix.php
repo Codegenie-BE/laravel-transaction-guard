@@ -219,7 +219,57 @@ PHP,
         'rules' => ['TG016'],
         'absent' => ['TG001'],
     ],
-    'Bus dispatchSync is reported' => [
+    'Bus bulk queued job without after commit is flagged' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+class BulkJob implements ShouldQueue {}
+DB::transaction(function () { Bus::bulk([new BulkJob()]); });
+CODE,
+        'rules' => ['TG001'],
+        'absent' => ['TG016'],
+    ],
+    'Bus bulk ShouldQueueAfterCommit job is safe' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+class BulkJob implements ShouldQueueAfterCommit {}
+DB::transaction(function () { Bus::bulk([new BulkJob()]); });
+CODE,
+        'rules' => [],
+        'absent' => ['TG001', 'TG016'],
+    ],
+    'Bus bulk non queueable command is synchronous' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Commands;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+class BulkCommand {}
+DB::transaction(function () { Bus::bulk([new BulkCommand()]); });
+CODE,
+        'rules' => ['TG016'],
+        'absent' => ['TG001'],
+    ],
+    'Bus bulk mixed commands reports synchronous and queued risk' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Bulk;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+class QueuedWork implements ShouldQueue {}
+class ImmediateWork {}
+DB::transaction(function () { Bus::bulk([new QueuedWork(), new ImmediateWork()]); });
+CODE,
+        'rules' => ['TG001', 'TG016'],
+    ],    'Bus dispatchSync is reported' => [
         'code' => <<<'PHP'
 <?php
 use Illuminate\Support\Facades\Bus;
