@@ -34,6 +34,7 @@ final class ClassMetadataIndex
         }
 
         $index->resolveInheritedInterfaces();
+        $index->resolveInheritedConstructorBehavior();
 
         return $index;
     }
@@ -234,7 +235,7 @@ final class ClassMetadataIndex
             }
 
             $traits = $this->traitsUsed($tokens, $openBrace + 1, $closeBrace - 1, $context);
-            [$afterCommit, $beforeCommit, $constructorConnection, $constructorQueue, $constructorOverride] =
+            [$afterCommit, $beforeCommit, $constructorConnection, $constructorQueue, $constructorOverride, $declaresConstructor] =
                 $this->constructorQueueBehavior($tokens, $openBrace + 1, $closeBrace - 1, $source);
             [$propertyConnection, $propertyQueue, $propertyAfterCommit] =
                 $this->classQueueDefaults($tokens, $openBrace + 1, $closeBrace - 1, $source);
@@ -253,6 +254,7 @@ final class ClassMetadataIndex
                 constructorAfterCommit: $afterCommit,
                 constructorBeforeCommit: $beforeCommit,
                 constructorQueueConnection: $queueConnection,
+                declaresConstructor: $declaresConstructor,
                 queueConnectionAttribute: $attributeConnection,
                 traits: $traits,
                 queueName: $queueName,
@@ -357,7 +359,7 @@ final class ClassMetadataIndex
 
     /**
      * @param  list<Token>  $tokens
-     * @return array{bool,bool,string|null,string|null,bool|null}
+     * @return array{bool,bool,string|null,string|null,bool|null,bool}
      */
     private function constructorQueueBehavior(array $tokens, int $start, int $end, string $source): array
     {
@@ -373,21 +375,18 @@ final class ClassMetadataIndex
 
             $openBrace = $this->nextText($tokens, $nameIndex + 1, '{', $end);
             if ($openBrace === null) {
-                return [false, false, null, null, null];
+                return [false, false, null, null, null, true];
             }
 
             $closeBrace = $this->matchingBrace($tokens, $openBrace, $end);
             if ($closeBrace === null) {
-                return [false, false, null, null, null];
+                return [false, false, null, null, null, true];
             }
 
-            $offset = $tokens[$openBrace]['offset'];
-            $length = ($tokens[$closeBrace]['offset'] + strlen($tokens[$closeBrace]['text'])) - $offset;
-            $body = substr($source, $offset, $length);
-
+            $body = $this->topLevelTokenSource($tokens, $openBrace + 1, $closeBrace - 1, $source);
             $afterMatches = $this->booleanQueuePreferenceMatches($body);
-            $afterCommit = str_contains($body, '->afterCommit(');
-            $beforeCommit = str_contains($body, '->beforeCommit(');
+            $afterCommit = preg_match('/\$this\s*->\s*afterCommit\s*\(/', $body) === 1;
+            $beforeCommit = preg_match('/\$this\s*->\s*beforeCommit\s*\(/', $body) === 1;
             $override = $afterMatches === [] ? null : end($afterMatches)['value'];
 
             return [
@@ -396,10 +395,47 @@ final class ClassMetadataIndex
                 $this->lastQueueStringSetting($body, 'connection', 'onConnection'),
                 $this->lastQueueStringSetting($body, 'queue', 'onQueue'),
                 $override,
+                true,
             ];
         }
 
-        return [false, false, null, null, null];
+        return [false, false, null, null, null, false];
+    }
+
+    /** @param list<Token> $tokens */
+    private function topLevelTokenSource(array $tokens, int $start, int $end, string $source): string
+    {
+        if ($start > $end || ! isset($tokens[$start], $tokens[$end])) {
+            return '';
+        }
+
+        $from = $tokens[$start]['offset'];
+        $to = $tokens[$end]['offset'] + strlen($tokens[$end]['text']);
+        $body = substr($source, $from, max(0, $to - $from));
+        $depth = 0;
+
+        for ($i = $start; $i <= $end; $i++) {
+            $token = $tokens[$i];
+            if ($token['text'] === '{') {
+                $depth++;
+
+                continue;
+            }
+            if ($token['text'] === '}') {
+                $depth = max(0, $depth - 1);
+
+                continue;
+            }
+            if ($depth === 0) {
+                continue;
+            }
+
+            $relative = $token['offset'] - $from;
+            $masked = preg_replace('/[^\r\n]/', ' ', $token['text']) ?? str_repeat(' ', strlen($token['text']));
+            $body = substr_replace($body, $masked, $relative, strlen($token['text']));
+        }
+
+        return $body;
     }
 
     /**
@@ -410,8 +446,8 @@ final class ClassMetadataIndex
         $matches = [];
 
         foreach ([
-            '/->\s*afterCommit\s*\(/' => true,
-            '/->\s*beforeCommit\s*\(/' => false,
+            '/\$this\s*->\s*afterCommit\s*\(/' => true,
+            '/\$this\s*->\s*beforeCommit\s*\(/' => false,
         ] as $pattern => $value) {
             if (preg_match_all($pattern, $body, $found, PREG_OFFSET_CAPTURE) > 0) {
                 foreach ($found[0] as $match) {
@@ -974,12 +1010,54 @@ final class ClassMetadataIndex
                 constructorAfterCommit: $metadata->constructorAfterCommit,
                 constructorBeforeCommit: $metadata->constructorBeforeCommit,
                 constructorQueueConnection: $metadata->constructorQueueConnection,
+                declaresConstructor: $metadata->declaresConstructor,
                 queueConnectionAttribute: $metadata->queueConnectionAttribute,
                 traits: $metadata->traits,
                 queueName: $metadata->queueName,
                 afterCommitOverride: $metadata->afterCommitOverride,
             );
         }
+    }
+
+    private function resolveInheritedConstructorBehavior(): void
+    {
+        foreach (array_keys($this->classes) as $key) {
+            $this->inheritConstructorBehaviorFor($key, []);
+        }
+    }
+
+    /** @param array<string, true> $seen */
+    private function inheritConstructorBehaviorFor(string $key, array $seen): void
+    {
+        if (isset($seen[$key]) || ! isset($this->classes[$key])) {
+            return;
+        }
+        $seen[$key] = true;
+        $metadata = $this->classes[$key];
+        if ($metadata->declaresConstructor || $metadata->parent === null) {
+            return;
+        }
+
+        $parentKey = strtolower(ltrim($metadata->parent, '\\'));
+        $this->inheritConstructorBehaviorFor($parentKey, $seen);
+        $parent = $this->classes[$parentKey] ?? null;
+        if ($parent === null) {
+            return;
+        }
+
+        $this->classes[$key] = new ClassMetadata(
+            name: $metadata->name,
+            interfaces: $metadata->interfaces,
+            parent: $metadata->parent,
+            constructorAfterCommit: $parent->constructorAfterCommit,
+            constructorBeforeCommit: $parent->constructorBeforeCommit,
+            constructorQueueConnection: $metadata->constructorQueueConnection ?? $parent->constructorQueueConnection,
+            declaresConstructor: false,
+            queueConnectionAttribute: $metadata->queueConnectionAttribute,
+            traits: $metadata->traits,
+            queueName: $metadata->queueName,
+            afterCommitOverride: $metadata->afterCommitOverride ?? $parent->afterCommitOverride,
+        );
     }
 
     /**

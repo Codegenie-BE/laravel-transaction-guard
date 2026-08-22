@@ -1157,6 +1157,53 @@ DB::transaction(function () {
 PHP,
         'rules' => ['TG006'],
     ],
+    'afterCommit on another object does not configure the job' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue { public function __construct($other) { $other->afterCommit(); } }
+DB::transaction(function () { ProcessOrder::dispatch(new \stdClass()); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'conditional constructor afterCommit is not trusted as unconditional' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue { public function __construct(bool $safe) { if ($safe) { $this->afterCommit(); } } }
+DB::transaction(function () { ProcessOrder::dispatch(false); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'child without constructor inherits parent afterCommit behavior' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class BaseJob implements ShouldQueue { public function __construct() { $this->afterCommit(); } }
+class ProcessOrder extends BaseJob {}
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'child constructor does not inherit parent constructor afterCommit behavior' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class BaseJob implements ShouldQueue { public function __construct() { $this->afterCommit(); } }
+class ProcessOrder extends BaseJob { public function __construct() {} }
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => ['TG001'],
+    ],
     'job constructor queue connection unsafe override is respected' => [
         'code' => <<<'PHP'
 <?php
