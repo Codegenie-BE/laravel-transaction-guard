@@ -90,7 +90,16 @@ final class RuleCatalog
             throw new \InvalidArgumentException("Unknown Transaction Guard rule [{$rule}].");
         }
 
-        return [...self::RULES[$rule], ...self::DEFAULTS[$rule]];
+        $definition = self::RULES[$rule];
+        $defaults = self::DEFAULTS[$rule];
+
+        return [
+            'title' => $definition['title'],
+            'description' => $definition['description'],
+            'severity' => $defaults['severity'],
+            'category' => $defaults['category'],
+            'remediation' => $defaults['remediation'],
+        ];
     }
 
     public static function helpUri(string $rule): string
