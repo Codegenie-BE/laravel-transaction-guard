@@ -1,0 +1,73 @@
+name: Temporary owner maintenance
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: transaction-guard-owner-maintenance
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.actor == 'jordyloeuille' && startsWith(github.event.issue.title, 'Transaction Guard maintenance:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Resolve target branch
+        id: target
+        shell: bash
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          branch="$(printf '%s\n' "${ISSUE_BODY}" | sed -n 's/^branch=//p' | head -n 1)"
+          if ! [[ "${branch}" =~ ^[A-Za-z0-9._/-]+$ ]] || [ "${branch}" = 'main' ] || [ -z "${branch}" ]; then
+            echo 'Invalid or unsafe maintenance branch.' >&2
+            exit 1
+          fi
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.target.outputs.branch }}
+          fetch-depth: 0
+
+      - name: Verify maintenance script
+        run: test -f tools/maintenance.php
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: none
+
+      - name: Apply branch patch
+        run: php tools/maintenance.php
+
+      - name: Commit patch and remove maintenance script
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ steps.target.outputs.branch }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm tools/maintenance.php
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'Maintenance script produced no repository changes.' >&2
+            exit 1
+          fi
+          git commit -m "chore: apply reviewed repository maintenance"
+          git push origin "HEAD:${TARGET_BRANCH}"
+
+      - name: Close maintenance issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: gh issue close "${ISSUE_NUMBER}" --repo "${GITHUB_REPOSITORY}" --reason completed
