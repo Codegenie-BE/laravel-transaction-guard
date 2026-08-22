@@ -4,7 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-08-22
+
 ### Added
+
+- Local closure-variable transaction callback analysis with explicit low-confidence `TG014` diagnostics when a callback cannot be resolved.
+- Conservative local Laravel handle inference for HTTP, filesystem, cache, Redis, process and database connection objects.
+- Eloquent cross-connection write analysis for statically known model connections, including Laravel 13 `#[Connection]`.
+- Notification `viaConnections()` queue-connection analysis.
+- SARIF 2.1.0 output for code-scanning integrations.
+- Database-driver-aware `TG012` severity and a lowest-supported-dependency CI job.
 
 - Laravel 13 `Bus::bulk()` analysis distinguishes synchronous commands from commit-sensitive queued jobs, including mixed bulk payloads.
 - Connection-aware manual transaction analysis and `TG021` cross-database-connection write detection.
@@ -14,6 +23,13 @@ All notable changes to this project will be documented in this file.
 - Informational `composer benchmark` workload for analyzer profiling.
 
 ### Changed
+
+- Fixed Laravel concurrency/defer detection by centralizing facade static-method regex construction.
+- Transaction-free files now stop after transaction discovery instead of running every rule family.
+- Custom side-effect patterns are normalized consistently whether or not callers provide regex delimiters.
+- JSON and SARIF rendering substitute invalid UTF-8 source bytes instead of crashing output generation.
+- Release archives are validated before a tag is created, and analyzer benchmarks cover transaction-free, safe-transaction and side-effect-heavy workloads.
+- Temporary self-mutating audit/maintenance workflows are removed after the v0.2 hardening cycle.
 
 - `Bus::dispatch()` now follows Laravel's actual queued-vs-synchronous command semantics and honors indexed after-commit job metadata.
 - Source scanning pre-indexes lines/non-code ranges, caches repeated lookups, uses API-keyword fast paths and avoids repeated sort/filter work on transaction regions.

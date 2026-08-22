@@ -13,6 +13,7 @@ final readonly class AnalysisConfig
      * @param  array<string, bool>  $queueAfterCommitByConnection
      * @param  list<string>  $customSideEffectPatterns
      * @param  list<string>  $disabledRules
+     * @param  array<string, string>  $databaseDriverByConnection
      */
     public function __construct(
         public string $defaultQueueConnection = 'sync',
@@ -21,13 +22,15 @@ final readonly class AnalysisConfig
         public array $disabledRules = [],
         public bool $detectReadHttpCalls = false,
         public string $defaultDatabaseConnection = '@default',
+        public array $databaseDriverByConnection = [],
     ) {
         $this->disabledRuleLookup = array_fill_keys($this->disabledRules, true);
 
         foreach ($this->customSideEffectPatterns as $pattern) {
+            $regex = str_starts_with($pattern, '/') ? $pattern : '/'.str_replace('/', '\\/', $pattern).'/';
             set_error_handler(static fn (): bool => true);
             try {
-                $valid = preg_match($pattern, '') !== false;
+                $valid = preg_match($regex, '') !== false;
             } finally {
                 restore_error_handler();
             }
@@ -48,5 +51,12 @@ final readonly class AnalysisConfig
         $connection ??= $this->defaultQueueConnection;
 
         return $this->queueAfterCommitByConnection[$connection] ?? false;
+    }
+
+    public function databaseDriver(?string $connection = null): ?string
+    {
+        $connection ??= $this->defaultDatabaseConnection;
+
+        return $this->databaseDriverByConnection[$connection] ?? null;
     }
 }

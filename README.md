@@ -34,7 +34,7 @@ It also recognizes common safe patterns such as:
 - events implementing `ShouldDispatchAfterCommit`;
 - queued mailables / notifications configured with `afterCommit()`;
 - queue connections with `after_commit => true`;
-- literal Laravel 13 `Queue::route()` class/parent/interface connection routing;
+- Laravel 13 `Queue::route()` class/parent/interface/trait routing, `Queue::forward()` and statically resolvable queue attributes;
 - `DB::afterCommit(...)` callbacks;
 - moving the side effect after a manual `commit()` or `rollBack()`.
 
@@ -59,6 +59,7 @@ Useful CI modes:
 ```bash
 php artisan transaction:guard --format=github
 php artisan transaction:guard --format=json
+php artisan transaction:guard --format=sarif
 php artisan transaction:guard --fail-on=error
 ```
 
@@ -139,10 +140,12 @@ They are reported as `TG100` while executed inside a detected transaction.
 | `TG011` | warning / critical | Side effect can repeat during transaction deadlock retries |
 | `TG012` | critical | DDL / implicit commit risk |
 | `TG013` | critical | Unclosed manual transaction |
+| `TG014` | info | Transaction callback could not be resolved statically |
 | `TG016` | warning | Synchronous job dispatch inside transaction |
 | `TG017` | warning | After-response dispatch mistaken for commit safety |
 | `TG018` | warning | Concurrent/deferred execution inside transaction |
 | `TG020` | warning / error | Redis mutation or publish inside transaction |
+| `TG021` | error | Database/Eloquent write on another connection |
 | `TG100` | warning | Configured custom side effect |
 | `TG900` | error | Unreadable source file |
 | `TG901` | error | PHP parse failure |
@@ -160,9 +163,10 @@ This is deliberate: transaction safety is a design decision. Automatically delay
 The analyzer is intentionally conservative and Laravel-focused. It does not execute PHP and therefore cannot prove every dynamic call graph. In particular:
 
 - side effects hidden behind arbitrary application service methods require a custom pattern;
-- dynamically chosen queue connection names cannot always be resolved;
-- Laravel 13 trait-based and array-form `Queue::route()`, `Queue::forward()`, queue attributes/enums, and runtime queue reconfiguration are not trusted as proof of a safe connection in v0.1;
+- dynamically chosen queue/database connection names cannot always be resolved;
+- runtime queue reconfiguration, dynamic attributes/enums and arbitrary container bindings remain conservative;
 - side effects hidden in arbitrary event listeners or Eloquent observers require explicit post-commit contracts or project-specific patterns;
+- local closure variables and simple local Laravel handles are resolved, but the package intentionally does not build a general PHP call graph;
 - highly branch-dependent manual transaction flows may require review;
 - third-party SDK calls are not guessed automatically;
 - nested closures that are merely defined inside a transaction are ignored unless immediately invoked.

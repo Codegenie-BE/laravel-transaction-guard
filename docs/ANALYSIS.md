@@ -101,3 +101,10 @@ The analyzer hot path pre-indexes source lines and non-code token ranges, caches
 Laravel 13 queue metadata follows the runtime resolver more closely: exact classes, parents, expanded interfaces, recursive traits, route arrays, queue forwarding and `#[Queue]`/constructor queue names are modeled when statically resolvable. Raw queue pushes are treated separately because driver `pushRaw()` paths bypass Laravel's job-aware `enqueueUsing()` after-commit decision.
 
 Manual transaction state carries its database connection. This both prevents a commit on one connection from lexically closing a transaction opened on another and enables high-confidence `TG021` cross-connection write findings.
+
+
+## v0.2 bounded local data flow
+
+The analyzer resolves simple local closure variables passed to `DB::transaction()`, simple local job/event/notification/broadcast payload assignments, and locally assigned Laravel HTTP/filesystem/cache/Redis/process/database handles. Any later unknown reassignment invalidates the inference. This deliberately increases signal without turning Transaction Guard into a general PHP call-graph engine.
+
+Statically known Eloquent model connections, including Laravel 13 `#[Connection]`, participate in `TG021` cross-connection analysis. `TG012` also uses the configured database driver: MySQL/MariaDB implicit-commit hazards remain critical, while drivers with broadly transactional DDL remain visible as warnings rather than being mislabeled as identical MySQL semantics.

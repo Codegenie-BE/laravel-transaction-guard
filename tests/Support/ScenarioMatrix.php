@@ -2203,4 +2203,170 @@ PHP,
         'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
     ],
 
+    'local transaction callback variable is analyzed' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+$callback = function () { Http::post('https://example.test/capture'); };
+DB::transaction($callback);
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'reassigned transaction callback is not falsely trusted' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+$callback = function () { Http::post('https://example.test/capture'); };
+$callback = resolve_callback();
+DB::transaction($callback);
+PHP,
+        'rules' => ['TG014'],
+        'absent' => ['TG006'],
+    ],
+    'local DB connection handle transaction is analyzed' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+$db = DB::connection('mysql');
+$db->transaction(function () { Http::post('https://example.test/capture'); });
+PHP,
+        'rules' => ['TG006'],
+        'config' => ['database_default' => 'pgsql'],
+    ],
+    'local HTTP client handle is detected' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { $http = Http::withToken('secret'); $http->post('https://example.test/capture'); });
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'local Storage disk handle is detected' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+DB::transaction(function () { $disk = Storage::disk('s3'); $disk->put('receipt.txt', 'x'); });
+PHP,
+        'rules' => ['TG007'],
+    ],
+    'local Redis connection handle is detected' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Redis;
+DB::transaction(function () { $redis = Redis::connection('cache'); $redis->publish('orders', 'paid'); });
+PHP,
+        'rules' => ['TG020'],
+    ],
+    'local DB handle cross connection write is detected' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection('mysql')->transaction(function () { $audit = DB::connection('pgsql'); $audit->table('audit')->insert(['ok' => 1]); });
+PHP,
+        'rules' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
+    'Eloquent Connection attribute cross connection write is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Attributes\Connection;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+#[Connection('pgsql')]
+class Audit extends Model {}
+DB::connection('mysql')->transaction(function () { Audit::create(['ok' => true]); });
+PHP,
+        'rules' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
+    'same connection Eloquent write remains atomic' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Attributes\Connection;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+#[Connection('mysql')]
+class Audit extends Model {}
+DB::connection('mysql')->transaction(function () { Audit::create(['ok' => true]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
+    'Eloquent model instance save honors model connection' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+class Audit extends Model { protected $connection = 'pgsql'; }
+DB::connection('mysql')->transaction(function () { $audit = new Audit(); $audit->save(); });
+PHP,
+        'rules' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
+    'notification viaConnections unsafe override defeats safe default' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Notifications;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ReceiptReady implements ShouldQueue { public function viaConnections(): array { return ['mail' => 'database']; } }
+DB::transaction(function () { $user->notify(new ReceiptReady()); });
+PHP,
+        'rules' => ['TG004'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true, 'database' => false]],
+    ],
+    'notification viaConnections safe overrides preserve safe base' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Notifications;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ReceiptReady implements ShouldQueue { public function viaConnections(): array { return ['mail' => 'redis', 'database' => 'redis']; } }
+DB::transaction(function () { $user->notify(new ReceiptReady()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG004'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'notification dynamic viaConnections is not trusted' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Notifications;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ReceiptReady implements ShouldQueue { public const CONNECTION = 'redis'; public function viaConnections(): array { return ['mail' => self::CONNECTION]; } }
+DB::transaction(function () { $user->notify(new ReceiptReady()); });
+PHP,
+        'rules' => ['TG004'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'custom side effect pattern may omit delimiters' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { SmsGateway::send('hello'); });
+PHP,
+        'rules' => ['TG100'],
+        'config' => ['custom_side_effect_patterns' => ['SmsGateway::send\\s*\\(']],
+    ],
+    'PostgreSQL DDL remains visible but is not classified as MySQL critical' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection('pgsql')->transaction(function () { DB::statement('CREATE TABLE example (id INT)'); });
+PHP,
+        'rules' => ['TG012'],
+        'config' => ['database_default' => 'pgsql', 'database_drivers' => ['pgsql' => 'pgsql']],
+    ],
+
 ];
