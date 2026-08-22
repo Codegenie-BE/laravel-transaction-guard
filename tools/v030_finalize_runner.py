@@ -80,6 +80,23 @@ if parse_pos >= 0:
     if doc_pos < 0 or next_pos < 0:
         raise RuntimeError('unable to remove obsolete parseContext method')
     metadata = metadata[:doc_pos] + metadata[next_pos:]
+
+# FileContextMap now owns namespace/import parsing, so the old local parser
+# helpers in ClassMetadataIndex are intentionally removed as dead code.
+use_start = metadata.find('    /** @return array<string, string> */\n    private function parseUseClause')
+if use_start >= 0:
+    use_end = metadata.find('    private function parseSingleName', use_start)
+    if use_end < 0:
+        raise RuntimeError('unable to remove obsolete parseUseClause/appendUse helpers')
+    metadata = metadata[:use_start] + metadata[use_end:]
+
+name_signature = '    private function isNameToken(?int $id): bool\n'
+name_pos = metadata.find(name_signature)
+if name_pos >= 0:
+    name_end = metadata.find('    /**\n     * @param  list<Token>  $tokens\n     */\n    private function previousSignificant', name_pos)
+    if name_end < 0:
+        raise RuntimeError('unable to remove obsolete isNameToken helper')
+    metadata = metadata[:name_pos] + metadata[name_end:]
 metadata_path.write_text(metadata)
 
 map_path = root / 'src/Analysis/FileContextMap.php'
