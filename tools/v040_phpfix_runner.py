@@ -64,25 +64,33 @@ scanner = scanner.replace(
     1,
 )
 
-# Explicitly cover Laravel's multi-column counter mutations. This small
-# dedicated pattern intentionally has no named method capture, avoiding any
-# method-chain filtering while the central catalog remains the shared source of
-# mutation names for the general path.
-needle = """        $mutations = OperationCatalog::alternation(OperationCatalog::QUERY_MUTATIONS);
+# Explicitly cover Laravel's multi-column counter mutations. Insert the focused
+# fallback strictly inside scanCrossConnectionDatabaseWrites() so whitespace or
+# neighboring facade scanners cannot affect the patch location.
+cross_pos = scanner.find('    private function scanCrossConnectionDatabaseWrites')
+if cross_pos < 0:
+    raise RuntimeError('cross-connection scanner not found')
+next_pos = scanner.find('    private function reportCrossConnectionWrite', cross_pos)
+if next_pos < 0:
+    raise RuntimeError('cross-connection scanner end not found')
+cross_segment = scanner[cross_pos:next_pos]
+mutation_pos = cross_segment.find('$mutations = OperationCatalog::alternation(OperationCatalog::QUERY_MUTATIONS);')
+if mutation_pos < 0:
+    raise RuntimeError('cross-connection mutation catalog not found')
+line_end = cross_segment.find('\n', mutation_pos)
+if line_end < 0:
+    raise RuntimeError('cross-connection mutation catalog line end not found')
+counter_block = r'''
 
         foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\DB', 'DB') as $alias) {
-"""
-replacement = """        $mutations = OperationCatalog::alternation(OperationCatalog::QUERY_MUTATIONS);
-
-        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\DB', 'DB') as $alias) {
-            $counterPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::\\s*connection\\s*\\(\\s*(?P<quote>[\\\'\\\"])(?P<connection>[^\\\'\\\"]+)\\k<quote>\\s*\\)\\s*->(?:(?![;{}]).)*?\\b(?:incrementEach|decrementEach)\\s*\\(/is';
+            $counterPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*(?P<quote>[\'\"])(?P<connection>[^\'\"]+)\k<quote>\s*\)\s*->(?:(?![;{}]).)*?\b(?:incrementEach|decrementEach)\s*\(/is';
             foreach ($this->matches($counterPattern) as $match) {
                 $this->reportCrossConnectionWrite($findings, $match['offset'], $this->captured($match, 'connection'));
             }
-"""
-if needle not in scanner:
-    raise RuntimeError('cross-connection counter insertion anchor missing')
-scanner = scanner.replace(needle, replacement, 1)
+        }
+'''
+cross_segment = cross_segment[:line_end + 1] + counter_block + cross_segment[line_end + 1:]
+scanner = scanner[:cross_pos] + cross_segment + scanner[next_pos:]
 scanner_path.write_text(scanner)
 
 guard_path = ROOT / 'src/TransactionGuard.php'
