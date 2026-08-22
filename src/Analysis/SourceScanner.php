@@ -1438,6 +1438,7 @@ final class SourceScanner
 
         return $result;
     }
+
     /** @param array<int|string, mixed> $match */
     private function semanticCaptureIsNonCode(array $match): bool
     {
@@ -1559,13 +1560,9 @@ final class SourceScanner
     {
         $code = $this->codeOnlyFragment($statement);
         if (preg_match('/->\s*onConnection\s*\(/i', $code, $call, PREG_OFFSET_CAPTURE) === 1) {
-            $offset = $call[0][1];
-            $tail = substr($statement, $offset);
-            if (preg_match('/^->\s*onConnection\s*\(\s*([\'\"])(.*?)\s*\)/is', $tail, $literal) === 1) {
-                return stripcslashes($literal[2]);
-            }
+            $literal = $this->literalStringArgumentFromCall(substr($statement, $call[0][1]));
 
-            return '@dynamic';
+            return $literal ?? '@dynamic';
         }
 
         foreach ($this->facadeAliases('Illuminate\Support\Facades\Queue', 'Queue') as $alias) {
@@ -1574,14 +1571,9 @@ final class SourceScanner
                 continue;
             }
 
-            $offset = $call[0][1];
-            $tail = substr($statement, $offset);
-            $literalPattern = '/^(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*([\'\"])(.*?)\s*\)/is';
-            if (preg_match($literalPattern, $tail, $literal) === 1) {
-                return stripcslashes($literal[2]);
-            }
+            $literal = $this->literalStringArgumentFromCall(substr($statement, $call[0][1]));
 
-            return '@dynamic';
+            return $literal ?? '@dynamic';
         }
 
         if ($metadata?->constructorQueueConnection !== null) {
@@ -1590,10 +1582,44 @@ final class SourceScanner
 
         return $metadata === null ? null : $this->classIndex->queueRouteConnection($metadata->name);
     }
+
+    private function literalStringArgumentFromCall(string $call): ?string
+    {
+        $tokens = token_get_all('<?php '.$call);
+        $insideArguments = false;
+
+        foreach ($tokens as $token) {
+            if (! $insideArguments) {
+                if ($token === '(') {
+                    $insideArguments = true;
+                }
+
+                continue;
+            }
+
+            if (is_array($token) && in_array($token[0], [T_OPEN_TAG, T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+            if (! is_array($token) || $token[0] !== T_CONSTANT_ENCAPSED_STRING) {
+                return null;
+            }
+
+            $literal = $token[1];
+            if (strlen($literal) < 2) {
+                return null;
+            }
+
+            return stripcslashes(substr($literal, 1, -1));
+        }
+
+        return null;
+    }
+
     private function statementContainsAfterCommit(string $statement): bool
     {
         return preg_match('/->\s*afterCommit\s*\(/i', $this->codeOnlyFragment($statement)) === 1;
     }
+
     private function callArgumentContainsPreference(string $statement, string $callMethod, string $preference): bool
     {
         $code = $this->codeOnlyFragment($statement);
@@ -1651,32 +1677,50 @@ final class SourceScanner
         }
 
         return false;
-    }    private function statementContainsBeforeCommit(string $statement): bool
+    }
+
+    private function statementContainsBeforeCommit(string $statement): bool
     {
         return preg_match('/->\s*beforeCommit\s*\(/i', $this->codeOnlyFragment($statement)) === 1;
     }
+
     private function statementContainsAfterResponse(string $statement): bool
     {
         return preg_match('/->\s*afterResponse\s*\(/i', $this->codeOnlyFragment($statement)) === 1;
     }
+
     private function newClassFromStatement(string $statement): ?string
     {
-        if (preg_match('/\bnew\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)/', $this->codeOnlyFragment($statement), $m) === 1) {
-            return $m[1];
-        }
-
-        return null;
+        return $this->newClassesFromStatement($statement)[0] ?? null;
     }
+
     /** @return list<string> */
     private function newClassesFromStatement(string $statement): array
     {
-        $result = preg_match_all('/\bnew\s+(\\?[A-Za-z_][A-Za-z0-9_\\]*)/', $this->codeOnlyFragment($statement), $matches);
-        if ($result === false || $result === 0) {
-            return [];
+        $tokens = token_get_all('<?php '.$statement);
+        $classes = [];
+        $count = count($tokens);
+
+        for ($i = 0; $i < $count; $i++) {
+            if (! is_array($tokens[$i]) || $tokens[$i][0] !== T_NEW) {
+                continue;
+            }
+
+            for ($j = $i + 1; $j < $count; $j++) {
+                $token = $tokens[$j];
+                if (is_array($token) && in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                    continue;
+                }
+                if (is_array($token) && in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)) {
+                    $classes[] = $token[1];
+                }
+                break;
+            }
         }
 
-        return array_values(array_unique($matches[1]));
+        return array_values(array_unique($classes));
     }
+
     private function codeOnlyFragment(string $fragment): string
     {
         if (array_key_exists($fragment, $this->statementCodeCache)) {
@@ -1703,7 +1747,8 @@ final class SourceScanner
     }
 
     /** @return list<string> */
-    private function facadeAliases(string $fqcn, string $fallback): array    {
+    private function facadeAliases(string $fqcn, string $fallback): array
+    {
         $cacheKey = strtolower(ltrim($fqcn, '\\')).'|'.$fallback;
         if (isset($this->facadeAliasCache[$cacheKey])) {
             return $this->facadeAliasCache[$cacheKey];
