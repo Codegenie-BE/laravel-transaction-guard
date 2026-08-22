@@ -1617,7 +1617,7 @@ final class SourceScanner
 
                     continue;
                 }
-                if ($char === '\') {
+                if (ord($char) === 92) {
                     $escaped = true;
 
                     continue;
@@ -1628,7 +1628,7 @@ final class SourceScanner
 
                 continue;
             }
-            if ($char === '\'' || $char === '"') {
+            if ($char === "'" || $char === '"') {
                 $quote = $char;
 
                 continue;
@@ -1651,8 +1651,7 @@ final class SourceScanner
         }
 
         return false;
-    }
-    private function statementContainsBeforeCommit(string $statement): bool
+    }    private function statementContainsBeforeCommit(string $statement): bool
     {
         return preg_match('/->\s*beforeCommit\s*\(/i', $this->codeOnlyFragment($statement)) === 1;
     }
