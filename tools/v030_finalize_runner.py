@@ -2,6 +2,9 @@ from pathlib import Path
 
 path = Path(__file__).with_name('v030_finalize.py')
 code = path.read_text()
+
+# Replace the Queue route/forward section with position-based edits so Python
+# and PHP backslash escaping cannot invalidate the patch anchors.
 start = code.index('# Queue route/forward declarations can live in any namespace section.')
 end = code.index('# Add map-wide facade aliases before the existing per-context helper.')
 replacement = r'''# Queue route/forward declarations can live in any namespace section.
@@ -39,6 +42,33 @@ write('src/Analysis/ClassMetadataIndex.php', text)
 
 '''
 code = code[:start] + replacement + code[end:]
+
+# Insert namespace-relative resolution immediately before FileContext resolves
+# imported aliases, instead of matching a PHP backslash literal in source text.
+start = code.index('# FileContext understands namespace-relative names.')
+end = code.index('# SourceScanner chooses context by match offset and sees aliases from all sections.')
+replacement = r'''# FileContext understands namespace-relative names.
+context_source = read('src/Analysis/FileContext.php')
+marker = "        [$first] = explode('\\\\', $name, 2);"
+pos = context_source.find(marker)
+if pos < 0:
+    marker = '        [$first] = explode('
+    pos = context_source.find(marker)
+if pos < 0:
+    raise RuntimeError('FileContext alias-resolution marker not found')
+insertion = r'''        if (str_starts_with(strtolower($name), 'namespace\\')) {
+            $relative = substr($name, strlen('namespace\\'));
+
+            return $this->namespace !== '' ? $this->namespace.'\\'.$relative : $relative;
+        }
+
+'''
+context_source = context_source[:pos] + insertion + context_source[pos:]
+write('src/Analysis/FileContext.php', context_source)
+
+'''
+code = code[:start] + replacement + code[end:]
+
 exec(compile(code, str(path), 'exec'), {'__file__': str(path), '__name__': '__main__'})
 
 # This tracked runner is intentionally removed after the validated finalize run.
