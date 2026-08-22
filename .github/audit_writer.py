@@ -177,7 +177,7 @@ source.write_text(text.replace(marker, method + marker, 1))
 
 matrix = Path("tests/Support/ScenarioMatrix.php")
 text = matrix.read_text()
-marker = "    'global dispatch helper with unresolved class is conservatively reported' => [\n"
+marker = "    'global dispatch helper unsafe queued job is flagged' => [\n"
 scenarios = r'''    'locally assigned queued job variable is detected' => [
         'code' => <<<'PHP'
 <?php
