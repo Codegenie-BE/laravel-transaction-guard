@@ -37,6 +37,9 @@ final class SourceScanner
     /** @var array<string, list<string>> */
     private array $facadeAliasCache = [];
 
+    /** @var array<int, list<string>> */
+    private array $suppressionComments = [];
+
     private string $source = '';
 
     private string $file = '';
@@ -71,6 +74,7 @@ final class SourceScanner
 
         try {
             $this->tokens = $this->tokenize($source);
+            $this->suppressionComments = $this->indexSuppressionComments();
         } catch (ParseError $e) {
             return [new Finding(
                 rule: 'TG901',
@@ -1882,16 +1886,39 @@ final class SourceScanner
     private function suppressed(int $offset, string $rule): bool
     {
         $line = $this->lineAtOffset($offset);
-        $current = $this->sourceIndex->line($line);
-        if ($this->suppressionDirectiveMatches($current, 'transaction-guard-ignore', $rule, rejectNextLine: true)) {
-            return true;
+
+        foreach ($this->suppressionComments[$line] ?? [] as $comment) {
+            if ($this->suppressionDirectiveMatches($comment, 'transaction-guard-ignore', $rule, rejectNextLine: true)) {
+                return true;
+            }
         }
 
-        return $this->suppressionDirectiveMatches(
-            $this->sourceIndex->line($line - 1),
-            'transaction-guard-ignore-next-line',
-            $rule,
-        );
+        foreach ($this->suppressionComments[$line - 1] ?? [] as $comment) {
+            if ($this->suppressionDirectiveMatches($comment, 'transaction-guard-ignore-next-line', $rule)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return array<int, list<string>> */
+    private function indexSuppressionComments(): array
+    {
+        $comments = [];
+
+        foreach ($this->tokens as $token) {
+            if (! in_array($token['id'], [T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            $lines = preg_split('/\R/', $token['text']) ?: [$token['text']];
+            foreach ($lines as $offset => $text) {
+                $comments[$token['line'] + $offset][] = $text;
+            }
+        }
+
+        return $comments;
     }
 
     private function suppressionDirectiveMatches(string $line, string $directive, string $rule, bool $rejectNextLine = false): bool
