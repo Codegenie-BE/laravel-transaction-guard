@@ -74,7 +74,7 @@ final class SourceScanner
 
         try {
             $this->tokens = $this->tokenize($source);
-        $this->suppressionComments = $this->indexSuppressionComments();
+            $this->suppressionComments = $this->indexSuppressionComments();
         } catch (ParseError $e) {
             return [new Finding(
                 rule: 'TG901',
@@ -1920,6 +1920,7 @@ final class SourceScanner
 
         return $comments;
     }
+
     private function suppressionDirectiveMatches(string $line, string $directive, string $rule, bool $rejectNextLine = false): bool
     {
         $pattern = '/'.preg_quote($directive, '/').'(?:\s+([A-Z0-9, ]+))?/i';
