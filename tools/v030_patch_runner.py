@@ -50,3 +50,15 @@ replace('src/Analysis/SourceScanner.php',
 '''
 code = code[:start] + replacement + code[end:]
 exec(compile(code, str(path), 'exec'), {'__file__': str(path), '__name__': '__main__'})
+
+# The original fingerprint block has nested braces. The regex replacement in the
+# deterministic patch intentionally stays simple, so normalize the one leftover
+# outer brace before PHP formatting/parsing runs.
+finding_path = Path(__file__).resolve().parents[1] / 'src/Analysis/Finding.php'
+finding = finding_path.read_text()
+finding = finding.replace(
+    "        }\n        }\n\n        return hash('sha256'",
+    "        }\n\n        return hash('sha256'",
+    1,
+)
+finding_path.write_text(finding)
