@@ -29,67 +29,36 @@ jobs:
           ref: feature/v0.2-analyzer-hardening-clean
           fetch-depth: 0
 
-      - name: Apply final efficiency and coverage fixes
+      - name: Apply remaining analyzer changes
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(path: str, old: str, new: str) -> None:
-              file = Path(path)
-              text = file.read_text()
-              if old not in text:
-                  raise SystemExit(f'Expected fragment not found in {path}: {old[:100]!r}')
-              file.write_text(text.replace(old, new, 1))
+          path = Path('src/Analysis/SourceScanner.php')
+          text = path.read_text()
 
-          # 1. Scanner fast-path: after syntax/transaction discovery there is no reason
-          # to execute every side-effect matcher in files that contain no transaction.
-          replace_once(
-              'src/Analysis/SourceScanner.php',
-              "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n",
-              "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        if ($this->transactions === []) {\n            return [];\n        }\n\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n",
-          )
+          old = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
+          new = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        if ($this->transactions === []) {\n            return [];\n        }\n\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
+          if old not in text:
+              raise SystemExit('Transaction fast-path insertion point not found')
+          text = text.replace(old, new, 1)
 
-          # 2. A global dispatch(new ...) helper is itself sufficient evidence that the
-          # object is being sent through Laravel's bus; do not require a Jobs namespace.
-          replace_once(
-              'src/Analysis/SourceScanner.php',
-              "                $looksLikeJob = $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n",
-              "                $isGlobalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\\\\\?dispatch\\s*\\(\\s*new\\s+/i', $statement) === 1;\n                $looksLikeJob = $isGlobalDispatchHelper\n                    || $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n",
-          )
+          old = "                $looksLikeJob = $metadata?->queued() === true\n"
+          new = "                $isGlobalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\?dispatch\\s*\\(\\s*new\\s+/i', $statement) === 1;\n                $looksLikeJob = $isGlobalDispatchHelper\n                    || $metadata?->queued() === true\n"
+          if old not in text:
+              raise SystemExit('Global dispatch classification insertion point not found')
+          text = text.replace(old, new, 1)
+          path.write_text(text)
 
-          # 3. Build the disabled-rule lookup once; finding hot paths become O(1).
-          replace_once(
-              'src/Analysis/AnalysisConfig.php',
-              "final readonly class AnalysisConfig\n{\n",
-              "final readonly class AnalysisConfig\n{\n    /** @var array<string, true> */\n    private array $disabledRuleLookup;\n\n",
-          )
-          replace_once(
-              'src/Analysis/AnalysisConfig.php',
-              "    ) {\n        foreach ($this->customSideEffectPatterns as $pattern) {\n",
-              "    ) {\n        $this->disabledRuleLookup = array_fill_keys($this->disabledRules, true);\n\n        foreach ($this->customSideEffectPatterns as $pattern) {\n",
-          )
-          replace_once(
-              'src/Analysis/AnalysisConfig.php',
-              "        return ! in_array($rule, $this->disabledRules, true);\n",
-              "        return ! isset($this->disabledRuleLookup[$rule]);\n",
-          )
-
-          # 4. --generate-baseline already runs with baseline filtering disabled. Reuse
-          # that result instead of scanning/indexing the entire project a second time.
-          replace_once(
-              'src/Console/TransactionGuardCommand.php',
-              "        if ((bool) $this->option('generate-baseline')) {\n            try {\n                $raw = $guard->analyze($paths, $exclude, null);\n                Baseline::write($baselinePath, $raw->findings);\n            } catch (\\JsonException|\\RuntimeException $exception) {\n                $this->error('Unable to generate Transaction Guard baseline: '.$exception->getMessage());\n\n                return self::INVALID;\n            }\n\n            $this->info(sprintf('Transaction Guard baseline written: %s (%d findings).', $baselinePath, count($raw->findings)));\n\n            return self::SUCCESS;\n        }\n",
-              "        if ((bool) $this->option('generate-baseline')) {\n            try {\n                Baseline::write($baselinePath, $result->findings);\n            } catch (\\JsonException|\\RuntimeException $exception) {\n                $this->error('Unable to generate Transaction Guard baseline: '.$exception->getMessage());\n\n                return self::INVALID;\n            }\n\n            $this->info(sprintf('Transaction Guard baseline written: %s (%d findings).', $baselinePath, count($result->findings)));\n\n            return self::SUCCESS;\n        }\n",
-          )
-
-          # 5. Lock the global dispatch false-negative with a non-conventional namespace.
           matrix = Path('tests/Support/ScenarioMatrix.php')
           text = matrix.read_text()
-          marker = "    'fully qualified DB and Http facades are detected' => [\n"
-          if marker not in text:
-              raise SystemExit('Scenario insertion marker not found')
-          scenario = r'''    'global dispatch helper detects job outside Jobs namespace' => [
+          scenario_name = "global dispatch helper detects job outside Jobs namespace"
+          if scenario_name not in text:
+              marker = "    'fully qualified DB and Http facades are detected' => [\n"
+              if marker not in text:
+                  raise SystemExit('Scenario insertion marker not found')
+              scenario = r'''    'global dispatch helper detects job outside Jobs namespace' => [
         'code' => <<<'PHP'
 <?php
 namespace App\Work;
@@ -100,17 +69,15 @@ PHP,
         'rules' => ['TG001'],
     ],
 '''
-          text = text.replace(marker, scenario + marker, 1)
-          matrix.write_text(text)
+              text = text.replace(marker, scenario + marker, 1)
+              matrix.write_text(text)
 
-          # 6. Document the strongest hot-path optimization explicitly.
           analysis = Path('docs/ANALYSIS.md')
           text = analysis.read_text()
+          sentence = ' Files with no detected database transaction return immediately after transaction discovery, before any side-effect rule scans run.'
           needle = 'The analyzer hot path now pre-indexes source lines and non-code token ranges, caches statement/facade lookups, uses binary-search token/line lookup, and avoids temporary filter/sort allocations when selecting transaction/callable regions.'
-          replacement = needle + ' Files with no detected database transaction return immediately after transaction discovery, before any side-effect rule scans run.'
-          if needle in text and replacement not in text:
-              text = text.replace(needle, replacement, 1)
-          analysis.write_text(text)
+          if sentence.strip() not in text and needle in text:
+              analysis.write_text(text.replace(needle, needle + sentence, 1))
           PY
 
       - name: Setup PHP for formatting
@@ -126,13 +93,13 @@ PHP,
       - name: Apply Pint
         run: composer format
 
-      - name: Commit validated branch changes
+      - name: Commit branch changes
         id: commit
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- src/Analysis/SourceScanner.php src/Analysis/AnalysisConfig.php src/Console/TransactionGuardCommand.php tests/Support/ScenarioMatrix.php docs/ANALYSIS.md
+          git add -- src/Analysis/SourceScanner.php tests/Support/ScenarioMatrix.php docs/ANALYSIS.md
           if ! git diff --cached --quiet; then
             git commit -m 'perf: finish analyzer hot-path hardening'
             git push origin HEAD:feature/v0.2-analyzer-hardening-clean
