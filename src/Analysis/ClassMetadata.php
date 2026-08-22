@@ -17,6 +17,7 @@ final readonly class ClassMetadata
         public bool $constructorAfterCommit = false,
         public bool $constructorBeforeCommit = false,
         public ?string $constructorQueueConnection = null,
+        public ?string $queueConnectionAttribute = null,
         public array $traits = [],
         public ?string $queueName = null,
         public ?bool $afterCommitOverride = null,

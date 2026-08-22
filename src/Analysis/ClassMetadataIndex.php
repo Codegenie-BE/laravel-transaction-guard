@@ -48,6 +48,19 @@ final class ClassMetadataIndex
         return $this->contexts[$file] ?? new FileContext('', []);
     }
 
+    public function queueConnection(string $class, ?string $instanceConnection = null): ?string
+    {
+        $attribute = $this->queueConnectionAttributeFor($class);
+        if ($attribute !== null) {
+            return $attribute;
+        }
+        if ($instanceConnection !== null) {
+            return $instanceConnection;
+        }
+
+        return $this->queueConfiguredConnectionFor($class) ?? $this->queueRouteConnection($class);
+    }
+
     public function queueRouteConnection(string $class): ?string
     {
         $class = ltrim($class, '\\');
@@ -227,6 +240,7 @@ final class ClassMetadataIndex
                 $this->classQueueDefaults($tokens, $openBrace + 1, $closeBrace - 1, $source);
 
             $attributeQueue = $this->queueAttributeForDeclaration($source, $tokens[$i]['offset'], $context);
+            $attributeConnection = $this->connectionAttributeForDeclaration($source, $tokens[$i]['offset'], $context);
             $queueConnection = $constructorConnection ?? $propertyConnection;
             $queueName = $constructorQueue ?? $attributeQueue ?? $propertyQueue;
             $afterCommitOverride = $constructorOverride ?? $propertyAfterCommit;
@@ -239,6 +253,7 @@ final class ClassMetadataIndex
                 constructorAfterCommit: $afterCommit,
                 constructorBeforeCommit: $beforeCommit,
                 constructorQueueConnection: $queueConnection,
+                queueConnectionAttribute: $attributeConnection,
                 traits: $traits,
                 queueName: $queueName,
                 afterCommitOverride: $afterCommitOverride,
@@ -496,23 +511,66 @@ final class ClassMetadataIndex
 
     private function queueAttributeForDeclaration(string $source, int $declarationOffset, FileContext $context): ?string
     {
+        return $this->stringAttributeForDeclaration(
+            $source,
+            $declarationOffset,
+            $context,
+            'Illuminate\\Queue\\Attributes\\Queue',
+            'queue',
+        );
+    }
+
+    private function connectionAttributeForDeclaration(string $source, int $declarationOffset, FileContext $context): ?string
+    {
+        return $this->stringAttributeForDeclaration(
+            $source,
+            $declarationOffset,
+            $context,
+            'Illuminate\\Queue\\Attributes\\Connection',
+            'connection',
+        );
+    }
+
+    private function stringAttributeForDeclaration(
+        string $source,
+        int $declarationOffset,
+        FileContext $context,
+        string $attributeClass,
+        string $argumentName,
+    ): ?string {
         $prefixStart = max(0, $declarationOffset - 1500);
         $prefix = substr($source, $prefixStart, $declarationOffset - $prefixStart);
-        if (preg_match('/#\[(?<attributes>[^\]]+)\]\s*(?:(?:abstract|final|readonly)\s+)*$/s', $prefix, $match) !== 1) {
+        if (preg_match('/(?<blocks>(?:#\[[^\]]+\]\s*)+)(?:(?:abstract|final|readonly)\s+)*$/s', $prefix, $match) !== 1) {
             return null;
         }
 
-        $aliases = ['\\Illuminate\\Queue\\Attributes\\Queue'];
+        $aliases = ['\\'.ltrim($attributeClass, '\\')];
         foreach ($context->imports as $alias => $import) {
-            if (strcasecmp(ltrim($import, '\\'), 'Illuminate\\Queue\\Attributes\\Queue') === 0) {
+            if (strcasecmp(ltrim($import, '\\'), ltrim($attributeClass, '\\')) === 0) {
                 $aliases[] = $alias;
             }
         }
 
-        foreach (array_values(array_unique($aliases)) as $alias) {
-            $pattern = '/(?:^|,)\s*'.preg_quote($alias, '/').'\s*\(\s*([\'\"])(.*?)\1\s*\)/s';
-            if (preg_match($pattern, $match['attributes'], $attribute) === 1) {
-                return stripcslashes($attribute[2]);
+        $blockCount = preg_match_all('/#\[(?<attributes>[^\]]+)\]/s', $match['blocks'], $blocks, PREG_SET_ORDER);
+        if ($blockCount === false || $blockCount === 0) {
+            return null;
+        }
+
+        foreach ($blocks as $block) {
+            foreach (array_values(array_unique($aliases)) as $alias) {
+                $name = preg_quote($alias, '/');
+                if (preg_match('/(?:^|,)\s*'.$name.'\s*\(\s*\)/s', $block['attributes']) === 1) {
+                    return null;
+                }
+
+                $literal = '/(?:^|,)\s*'.$name.'\s*\(\s*(?:'.preg_quote($argumentName, '/').'\s*:\s*)?([\'\"])(.*?)\1\s*\)/s';
+                if (preg_match($literal, $block['attributes'], $attribute) === 1) {
+                    return stripcslashes($attribute[2]);
+                }
+
+                if (preg_match('/(?:^|,)\s*'.$name.'\s*\(/s', $block['attributes']) === 1) {
+                    return '@dynamic';
+                }
             }
         }
 
@@ -916,6 +974,7 @@ final class ClassMetadataIndex
                 constructorAfterCommit: $metadata->constructorAfterCommit,
                 constructorBeforeCommit: $metadata->constructorBeforeCommit,
                 constructorQueueConnection: $metadata->constructorQueueConnection,
+                queueConnectionAttribute: $metadata->queueConnectionAttribute,
                 traits: $metadata->traits,
                 queueName: $metadata->queueName,
                 afterCommitOverride: $metadata->afterCommitOverride,
@@ -1000,6 +1059,45 @@ final class ClassMetadataIndex
     }
 
     /** @param  array<string, true>  $seen */
+    /** @param array<string, true> $seen */
+    private function queueConnectionAttributeFor(string $class, array $seen = []): ?string
+    {
+        $key = strtolower(ltrim($class, '\\'));
+        if (isset($seen[$key])) {
+            return null;
+        }
+        $seen[$key] = true;
+        $metadata = $this->classes[$key] ?? null;
+        if ($metadata === null) {
+            return null;
+        }
+        if ($metadata->queueConnectionAttribute !== null) {
+            return $metadata->queueConnectionAttribute;
+        }
+
+        return $metadata->parent !== null ? $this->queueConnectionAttributeFor($metadata->parent, $seen) : null;
+    }
+
+    /** @param array<string, true> $seen */
+    private function queueConfiguredConnectionFor(string $class, array $seen = []): ?string
+    {
+        $key = strtolower(ltrim($class, '\\'));
+        if (isset($seen[$key])) {
+            return null;
+        }
+        $seen[$key] = true;
+        $metadata = $this->classes[$key] ?? null;
+        if ($metadata === null) {
+            return null;
+        }
+        if ($metadata->constructorQueueConnection !== null) {
+            return $metadata->constructorQueueConnection;
+        }
+
+        return $metadata->parent !== null ? $this->queueConfiguredConnectionFor($metadata->parent, $seen) : null;
+    }
+
+    /** @param array<string, true> $seen */
     private function queueNameFor(string $class, array $seen = []): ?string
     {
         $key = strtolower(ltrim($class, '\\'));

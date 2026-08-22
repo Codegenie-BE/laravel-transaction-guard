@@ -1770,10 +1770,9 @@ final class SourceScanner
     private function queueConnectionFromStatement(string $statement, ?ClassMetadata $metadata = null): ?string
     {
         $code = $this->codeOnlyFragment($statement);
+        $instanceConnection = null;
         if (preg_match('/->\s*onConnection\s*\(/i', $code, $call, PREG_OFFSET_CAPTURE) === 1) {
-            $literal = $this->literalStringArgumentFromCall(substr($statement, $call[0][1]));
-
-            return $literal ?? '@dynamic';
+            $instanceConnection = $this->literalStringArgumentFromCall(substr($statement, $call[0][1])) ?? '@dynamic';
         }
 
         foreach ($this->facadeAliases('Illuminate\Support\Facades\Queue', 'Queue') as $alias) {
@@ -1787,11 +1786,11 @@ final class SourceScanner
             return $literal ?? '@dynamic';
         }
 
-        if ($metadata?->constructorQueueConnection !== null) {
-            return $metadata->constructorQueueConnection;
+        if ($metadata !== null) {
+            return $this->classIndex->queueConnection($metadata->name, $instanceConnection);
         }
 
-        return $metadata === null ? null : $this->classIndex->queueRouteConnection($metadata->name);
+        return $instanceConnection;
     }
 
     private function literalStringArgumentFromCall(string $call): ?string
