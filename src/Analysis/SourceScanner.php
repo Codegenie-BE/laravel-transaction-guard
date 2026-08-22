@@ -1663,11 +1663,79 @@ final class SourceScanner
             if (str_starts_with($tail, '(') || preg_match('/^}\s*\)?\s*\(/', $tail) === 1) {
                 return false; // Immediately invoked closure.
             }
+            if ($this->nestedCallableRunsEagerly($callable)) {
+                return false;
+            }
 
             return true;
         }
 
         return false;
+    }
+
+    /** @param array{start:int,end:int} $callable */
+    private function nestedCallableRunsEagerly(array $callable): bool
+    {
+        $token = $this->tokenIndexBeforeOffset($callable['start']);
+        if ($token === null) {
+            return false;
+        }
+
+        $callableToken = null;
+        for ($i = $token; $i >= 0; $i--) {
+            if (in_array($this->tokens[$i]['id'], [T_FUNCTION, T_FN], true)) {
+                $callableToken = $i;
+                break;
+            }
+            if ($this->tokens[$i]['text'] === ';') {
+                break;
+            }
+        }
+        if ($callableToken === null) {
+            return false;
+        }
+
+        $depth = 0;
+        $open = null;
+        for ($i = $callableToken - 1; $i >= 0; $i--) {
+            $text = $this->tokens[$i]['text'];
+            if ($text === ')') {
+                $depth++;
+
+                continue;
+            }
+            if ($text !== '(') {
+                continue;
+            }
+            if ($depth > 0) {
+                $depth--;
+
+                continue;
+            }
+            $open = $i;
+            break;
+        }
+        if ($open === null) {
+            return false;
+        }
+
+        $nameIndex = $this->previousSignificantToken($open - 1);
+        if ($nameIndex === null) {
+            return false;
+        }
+        $rawName = ltrim($this->tokens[$nameIndex]['text'], '\\');
+        $parts = explode('\\', $rawName);
+        $name = strtolower(end($parts) ?: $rawName);
+        if (! in_array($name, [
+            'tap', 'retry', 'array_map', 'array_filter', 'array_reduce',
+            'array_walk', 'array_walk_recursive', 'usort', 'uasort', 'uksort',
+        ], true)) {
+            return false;
+        }
+
+        $beforeName = $this->previousSignificantToken($nameIndex - 1);
+
+        return $beforeName === null || ! in_array($this->tokens[$beforeName]['id'], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON], true);
     }
 
     private function isInsideAfterCommitCallback(int $offset): bool
