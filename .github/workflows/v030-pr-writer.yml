@@ -32,7 +32,7 @@ jobs:
           tools: composer:v2
 
       - name: Apply final v0.3.0 patch
-        run: python3 tools/v030_finalize.py
+        run: python3 tools/v030_finalize_runner.py
 
       - name: Lint source
         run: find src -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
