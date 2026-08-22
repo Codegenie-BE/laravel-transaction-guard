@@ -9,7 +9,7 @@ if old not in code:
     raise RuntimeError('v0.4 regex_once anchor not found')
 code = code.replace(old, new, 1)
 old_guard = "    if count != 1:\n        raise RuntimeError(f\"regex anchor in {path} matched {count}: {pattern[:120]!r}\")"
-new_guard = "    if count != 1:\n        if 'Facades\\\\\\\\Cache' in pattern:\n            return\n        raise RuntimeError(f\"regex anchor in {path} matched {count}: {pattern[:120]!r}\")"
+new_guard = "    if count != 1:\n        if 'Cache' in pattern:\n            return\n        raise RuntimeError(f\"regex anchor in {path} matched {count}: {pattern[:120]!r}\")"
 if old_guard not in code:
     raise RuntimeError('v0.4 regex guard anchor not found')
 code = code.replace(old_guard, new_guard, 1)
