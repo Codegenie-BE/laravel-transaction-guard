@@ -33,26 +33,31 @@ final class TransactionGuardCommand extends Command
             return self::INVALID;
         }
 
-        $paths = array_values(array_filter((array) $this->argument('paths'), 'is_string'));
+        $paths = $this->stringArguments('paths');
         if ($paths === []) {
-            $paths = array_values((array) config('transaction-guard.paths', ['app', 'routes']));
+            $paths = $this->stringListConfig('transaction-guard.paths', ['app', 'routes']);
         }
         $paths = array_map(fn (string $path): string => $this->absolutePath($path), $paths);
 
-        $exclude = array_values(array_filter((array) config('transaction-guard.exclude', []), 'is_string'));
+        $exclude = $this->stringListConfig('transaction-guard.exclude');
 
         try {
             $analysisConfig = new AnalysisConfig(
-                defaultQueueConnection: (string) config('queue.default', 'sync'),
+                defaultQueueConnection: $this->stringConfig('queue.default', 'sync'),
                 queueAfterCommitByConnection: $this->queueAfterCommitMap(),
-                customSideEffectPatterns: array_values(array_filter((array) config('transaction-guard.custom_side_effect_patterns', []), 'is_string')),
-                disabledRules: array_values(array_filter((array) config('transaction-guard.disabled_rules', []), 'is_string')),
+                customSideEffectPatterns: $this->stringListConfig('transaction-guard.custom_side_effect_patterns'),
+                disabledRules: $this->stringListConfig('transaction-guard.disabled_rules'),
                 detectReadHttpCalls: (bool) config('transaction-guard.detect_read_http_calls', false),
-                defaultDatabaseConnection: (string) config('database.default', '@default'),
+                defaultDatabaseConnection: $this->stringConfig('database.default', '@default'),
             );
 
             $guard = new TransactionGuard($analysisConfig);
-            $baselinePath = $this->absolutePath((string) ($this->option('baseline') ?: config('transaction-guard.baseline', '.transaction-guard-baseline.json')));
+            $baselineOption = $this->option('baseline');
+            $baselinePath = $this->absolutePath(
+                is_string($baselineOption) && $baselineOption !== ''
+                    ? $baselineOption
+                    : $this->stringConfig('transaction-guard.baseline', '.transaction-guard-baseline.json'),
+            );
             $useBaseline = ! (bool) $this->option('no-baseline') && ! (bool) $this->option('generate-baseline');
             $baseline = $useBaseline ? Baseline::load($baselinePath) : null;
             $result = $guard->analyze($paths, $exclude, $baseline);
@@ -78,7 +83,12 @@ final class TransactionGuardCommand extends Command
 
         $this->render($format, $result->findings, $result->filesAnalyzed);
 
-        $failOn = strtolower((string) ($this->option('fail-on') ?: config('transaction-guard.fail_on', 'warning')));
+        $failOnOption = $this->option('fail-on');
+        $failOn = strtolower(
+            is_string($failOnOption) && $failOnOption !== ''
+                ? $failOnOption
+                : $this->stringConfig('transaction-guard.fail_on', 'warning'),
+        );
         if ($failOn === 'never') {
             return self::SUCCESS;
         }
@@ -104,7 +114,8 @@ final class TransactionGuardCommand extends Command
     private function queueAfterCommitMap(): array
     {
         $override = config('transaction-guard.queue_after_commit');
-        $connections = (array) config('queue.connections', []);
+        $configuredConnections = config('queue.connections', []);
+        $connections = is_array($configuredConnections) ? $configuredConnections : [];
         $result = [];
 
         foreach ($connections as $name => $configuration) {
@@ -113,13 +124,13 @@ final class TransactionGuardCommand extends Command
         }
 
         if ($result === []) {
-            $result[(string) config('queue.default', 'sync')] = is_bool($override) ? $override : false;
+            $result[$this->stringConfig('queue.default', 'sync')] = is_bool($override) ? $override : false;
         }
 
         return $result;
     }
 
-    /** @param list<Finding> $findings */
+    /** @param  list<Finding>  $findings */
     private function render(string $format, array $findings, int $filesAnalyzed): void
     {
         if ($format === 'json') {
@@ -161,6 +172,32 @@ final class TransactionGuardCommand extends Command
         $this->table(['Severity', 'Rule', 'Location', 'Finding'], $rows);
         $this->newLine();
         $this->warn(sprintf('Transaction Guard found %d issue(s) across %d PHP files.', count($findings), $filesAnalyzed));
+    }
+
+    /** @return list<string> */
+    private function stringArguments(string $name): array
+    {
+        $value = $this->argument($name);
+
+        return is_array($value) ? array_values(array_filter($value, 'is_string')) : [];
+    }
+
+    /**
+     * @param  list<string>  $default
+     * @return list<string>
+     */
+    private function stringListConfig(string $key, array $default = []): array
+    {
+        $value = config($key, $default);
+
+        return is_array($value) ? array_values(array_filter($value, 'is_string')) : $default;
+    }
+
+    private function stringConfig(string $key, string $default): string
+    {
+        $value = config($key, $default);
+
+        return is_string($value) ? $value : $default;
     }
 
     private function escapeGithubCommandValue(string $value): string

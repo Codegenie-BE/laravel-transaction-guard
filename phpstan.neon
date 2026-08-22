@@ -2,15 +2,16 @@ includes:
     - vendor/larastan/larastan/extension.neon
 
 parameters:
-    level: 8
+    level: max
     paths:
         - src
     tmpDir: .phpstan-cache
     reportUnmatchedIgnoredErrors: true
 
-    # The analyzer deliberately models tokenizer/control-flow state with dynamic
-    # array shapes. These four identifiers are pinned to the exact files where
-    # PHPStan cannot prove the runtime invariant; any new identifier still fails CI.
+    # Tokenizer/control-flow analysis has a few invariants that PHPStan cannot
+    # prove from dynamic PREG/token array shapes. Keep every exception pinned
+    # to its exact identifier/file, and require the expected count where an
+    # identifier occurs more than once, so unrelated regressions still fail CI.
     ignoreErrors:
         -
             identifier: missingType.iterableValue
@@ -24,3 +25,7 @@ parameters:
         -
             identifier: deadCode.unreachable
             path: src/Analysis/SourceScanner.php
+        -
+            identifier: cast.string
+            path: src/Analysis/SourceScanner.php
+            count: 2

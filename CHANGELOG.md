@@ -20,7 +20,9 @@ All notable changes to this project will be documented in this file.
 - Recursive file discovery prunes excluded directories before descending and matches exclude path segments precisely.
 - After-commit metadata honors interface inheritance and explicit `afterCommit` property/constructor overrides.
 - Direct broadcasts no longer treat `ShouldDispatchAfterCommit` alone as proof of safety because Laravel queues them through the broadcast manager directly.
-- PHPStan level 8 remains enforced; four tokenizer/control-flow inference diagnostics are pinned by identifier and exact analyzer file so unrelated static-analysis regressions still fail CI.
+- PHPStan / Larastan now runs at `level: max` across the supported Laravel/PHP CI matrix.
+- Console configuration and baseline JSON handling use explicit runtime type narrowing so mixed framework/config input is safe at PHPStan max.
+- Six tokenizer/control-flow inference diagnostics that PHPStan cannot prove from dynamic token/PREG shapes remain narrowly pinned by identifier and exact analyzer file; `reportUnmatchedIgnoredErrors` stays enabled so stale exceptions and unrelated regressions fail CI.
 
 ## [v0.1.0] - 2026-08-21
 
@@ -48,4 +50,4 @@ All notable changes to this project will be documented in this file.
 ### Quality
 
 - Validated on PHP 8.2–8.5 across Laravel 12 and 13.
-- Composer validation, dependency audit, Pint, PHPStan level 8, Pest and the 80% coverage gate are enforced in CI.
+- Composer validation, dependency audit, Pint, PHPStan max, Pest and the 80% coverage gate are enforced in CI.
