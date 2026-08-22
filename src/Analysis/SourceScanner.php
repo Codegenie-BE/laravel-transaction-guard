@@ -313,7 +313,7 @@ final class SourceScanner
                 continue;
             }
 
-            $resolved = $this->context->resolve($this->captured($match, 'class'));
+            $resolved = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
             $metadata = $this->classIndex->metadata($resolved);
 
             if ($this->statementContainsBeforeCommit($statement)) {
@@ -609,7 +609,7 @@ final class SourceScanner
                 if ($tx === null) {
                     continue;
                 }
-                $class = $this->context->resolve($this->captured($match, 'class'));
+                $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
                 $metadata = $this->classIndex->metadata($class);
                 if ($metadata?->eventAfterCommit() === true) {
                     continue;
@@ -629,7 +629,7 @@ final class SourceScanner
             if ($tx === null) {
                 continue;
             }
-            $class = $this->context->resolve($this->captured($match, 'class'));
+            $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
             $metadata = $this->classIndex->metadata($class);
             $looksLikeEvent = $metadata?->eventAfterCommit() === true || str_contains(strtolower($class), '\\events\\');
             if (! $looksLikeEvent || $metadata?->eventAfterCommit() === true) {
@@ -702,7 +702,7 @@ final class SourceScanner
                 }
                 $statement = $this->statementAt($offset);
                 $method = strtolower($this->captured($match, 'method'));
-                $class = $this->context->resolve($this->captured($match, 'class'));
+                $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
                 $metadata = $this->classIndex->metadata($class);
                 $queued = ! in_array($method, ['notifynow', 'sendnow'], true) && $metadata?->queued() === true;
 
@@ -739,7 +739,7 @@ final class SourceScanner
                 if ($tx === null) {
                     continue;
                 }
-                $class = $this->context->resolve($this->captured($match, 'class'));
+                $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
                 $metadata = $this->classIndex->metadata($class);
                 $statement = $this->statementAt($offset);
                 $broadcastNow = $metadata?->implements('Illuminate\\Contracts\\Broadcasting\\ShouldBroadcastNow') === true;
@@ -1398,7 +1398,7 @@ final class SourceScanner
             if ($this->eligibleTransaction($offset) === null) {
                 continue;
             }
-            $class = $this->context->resolve($this->captured($match, 'class'));
+            $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
             if (! $this->classIndex->isEloquentModel($class)) {
                 continue;
             }
@@ -2169,9 +2169,10 @@ final class SourceScanner
         return $this->sourceIndex->isNonCode($offset);
     }
 
-    /** @param array{matches:array<int|string,mixed>} $match */
+    /** @param array{offset:int,matches:array<int|string,mixed>} $match */
     private function captured(array $match, string $name): string
     {
+        $this->context = $this->classIndex->contextFor($this->file, $match['offset']);
         $value = $match['matches'][$name] ?? '';
         if (is_array($value)) {
             $captured = $value[0] ?? '';
@@ -2560,14 +2561,15 @@ final class SourceScanner
 
         $normalized = ltrim($fqcn, '\\');
         $aliases = ['\\'.$normalized];
-        $fallbackImport = $this->context->imports[$fallback] ?? null;
-        if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
-            $aliases[] = $fallback;
-        }
-
-        foreach ($this->context->imports as $alias => $import) {
-            if (strcasecmp(ltrim($import, '\\'), $normalized) === 0) {
-                $aliases[] = $alias;
+        foreach ($this->classIndex->contextsFor($this->file) as $context) {
+            $fallbackImport = $context->imports[$fallback] ?? null;
+            if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
+                $aliases[] = $fallback;
+            }
+            foreach ($context->imports as $alias => $import) {
+                if (strcasecmp(ltrim($import, '\\'), $normalized) === 0) {
+                    $aliases[] = $alias;
+                }
             }
         }
 

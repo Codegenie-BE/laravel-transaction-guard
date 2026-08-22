@@ -23,6 +23,12 @@ final readonly class FileContext
             return ltrim($name, '\\');
         }
 
+        if (str_starts_with(strtolower($name), 'namespace\\')) {
+            $relative = substr($name, strlen('namespace\\'));
+
+            return $this->namespace !== '' ? $this->namespace.'\\'.$relative : $relative;
+        }
+
         [$first] = explode('\\', $name, 2);
         if (isset($this->imports[$first])) {
             $suffix = substr($name, strlen($first));

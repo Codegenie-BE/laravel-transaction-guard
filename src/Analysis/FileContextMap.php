@@ -16,7 +16,7 @@ final class FileContextMap
     private function __construct(private readonly array $ranges) {}
 
     /**
-     * @param list<ContextToken> $tokens
+     * @param  list<ContextToken>  $tokens
      */
     public static function fromTokens(array $tokens, int $sourceLength): self
     {
@@ -61,7 +61,9 @@ final class FileContextMap
             }
         }
 
-        return $this->ranges[array_key_last($this->ranges)]['context'] ?? new FileContext('', []);
+        $last = array_key_last($this->ranges);
+
+        return $last !== null ? $this->ranges[$last]['context'] : new FileContext('', []);
     }
 
     /** @return list<FileContext> */
@@ -84,7 +86,7 @@ final class FileContextMap
     }
 
     /**
-     * @param list<ContextToken> $tokens
+     * @param  list<ContextToken>  $tokens
      * @return list<array{declaration:int,start:int,end:int,namespace:string,baseDepth:int}>
      */
     private static function namespaceDeclarations(array $tokens, int $sourceLength): array
@@ -126,6 +128,7 @@ final class FileContextMap
                     'baseDepth' => 1,
                 ];
                 $i = $close;
+
                 continue;
             }
 
@@ -149,7 +152,7 @@ final class FileContextMap
     }
 
     /**
-     * @param list<ContextToken> $tokens
+     * @param  list<ContextToken>  $tokens
      * @return array<string, string>
      */
     private static function importsForRange(array $tokens, int $startOffset, int $endOffset, int $baseDepth): array
@@ -166,6 +169,7 @@ final class FileContextMap
                 } elseif ($token['text'] === '}') {
                     $depth = max(0, $depth - 1);
                 }
+
                 continue;
             }
             if ($token['offset'] >= $endOffset) {
@@ -184,6 +188,7 @@ final class FileContextMap
                 foreach (self::parseUseClause($clause) as $alias => $fqcn) {
                     $imports[$alias] = $fqcn;
                 }
+
                 continue;
             }
 

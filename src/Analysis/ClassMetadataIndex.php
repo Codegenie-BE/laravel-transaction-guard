@@ -12,7 +12,7 @@ final class ClassMetadataIndex
     /** @var array<string, ClassMetadata> */
     private array $classes = [];
 
-    /** @var array<string, FileContext> */
+    /** @var array<string, FileContextMap> */
     private array $contexts = [];
 
     /** @var array<string, string> Known connection name or @dynamic when a route connection is not statically resolvable. */
@@ -64,9 +64,17 @@ final class ClassMetadataIndex
         return $this->classes[$key] ?? null;
     }
 
-    public function contextFor(string $file): FileContext
+    public function contextFor(string $file, int $offset = 0): FileContext
     {
-        return $this->contexts[$file] ?? new FileContext('', []);
+        return isset($this->contexts[$file])
+            ? $this->contexts[$file]->at($offset)
+            : new FileContext('', []);
+    }
+
+    /** @return list<FileContext> */
+    public function contextsFor(string $file): array
+    {
+        return isset($this->contexts[$file]) ? $this->contexts[$file]->contexts() : [new FileContext('', [])];
     }
 
     public function queueConnection(string $class, ?string $instanceConnection = null): ?string
@@ -224,20 +232,20 @@ final class ClassMetadataIndex
         }
 
         $tokens = $this->tokens($source);
-        $context = $this->parseContext($tokens);
-        $this->contexts[$file] = $context;
+        $contexts = FileContextMap::fromTokens($tokens, strlen($source));
+        $this->contexts[$file] = $contexts;
 
-        $this->indexInterfaceDeclarations($tokens, $context);
-        $this->indexEnumDeclarations($tokens, $context);
-        $this->indexQueueRoutes($source, $tokens, $context);
-        $this->indexQueueForwards($source, $tokens, $context);
-        $this->indexClassAndTraitDeclarations($source, $tokens, $context);
+        $this->indexInterfaceDeclarations($tokens, $contexts);
+        $this->indexEnumDeclarations($tokens, $contexts);
+        $this->indexQueueRoutes($source, $tokens, $contexts);
+        $this->indexQueueForwards($source, $tokens, $contexts);
+        $this->indexClassAndTraitDeclarations($source, $tokens, $contexts);
     }
 
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexClassAndTraitDeclarations(string $source, array $tokens, FileContext $context): void
+    private function indexClassAndTraitDeclarations(string $source, array $tokens, FileContextMap $contexts): void
     {
         $count = count($tokens);
 
@@ -259,6 +267,7 @@ final class ClassMetadataIndex
                 continue;
             }
 
+            $context = $contexts->at($tokens[$i]['offset']);
             $name = $tokens[$nameIndex]['text'];
             $interfaces = [];
             $parent = null;
@@ -355,7 +364,7 @@ final class ClassMetadataIndex
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexInterfaceDeclarations(array $tokens, FileContext $context): void
+    private function indexInterfaceDeclarations(array $tokens, FileContextMap $contexts): void
     {
         $count = count($tokens);
 
@@ -369,6 +378,7 @@ final class ClassMetadataIndex
                 continue;
             }
 
+            $context = $contexts->at($tokens[$i]['offset']);
             $parents = [];
             $buffer = '';
             $collecting = false;
@@ -796,104 +806,6 @@ final class ClassMetadataIndex
         return null;
     }
 
-    /**
-     * @param  list<Token>  $tokens
-     */
-    private function parseContext(array $tokens): FileContext
-    {
-        $namespace = '';
-        $imports = [];
-        $braceDepth = 0;
-        $count = count($tokens);
-
-        for ($i = 0; $i < $count; $i++) {
-            $token = $tokens[$i];
-
-            if ($token['text'] === '{') {
-                $braceDepth++;
-            } elseif ($token['text'] === '}') {
-                $braceDepth = max(0, $braceDepth - 1);
-            }
-
-            if (($token['id'] ?? null) === T_NAMESPACE) {
-                $name = '';
-                for ($j = $i + 1; $j < $count; $j++) {
-                    if (in_array($tokens[$j]['text'], [';', '{'], true)) {
-                        break;
-                    }
-                    if ($this->isNameToken($tokens[$j]['id'] ?? null)) {
-                        $name .= $tokens[$j]['text'];
-                    }
-                }
-                $namespace = trim($name, " \t\n\r\0\x0B\\");
-
-                continue;
-            }
-
-            if (($token['id'] ?? null) === T_USE && $braceDepth === 0) {
-                $clause = '';
-                for ($j = $i + 1; $j < $count; $j++) {
-                    if ($tokens[$j]['text'] === ';') {
-                        $i = $j;
-                        break;
-                    }
-                    $clause .= $tokens[$j]['text'];
-                }
-
-                foreach ($this->parseUseClause($clause) as $alias => $fqcn) {
-                    $imports[$alias] = $fqcn;
-                }
-            }
-        }
-
-        return new FileContext($namespace, $imports);
-    }
-
-    /** @return array<string, string> */
-    private function parseUseClause(string $clause): array
-    {
-        $clause = trim($clause);
-        if ($clause === '' || str_starts_with($clause, 'function ') || str_starts_with($clause, 'const ')) {
-            return [];
-        }
-
-        $result = [];
-
-        if (preg_match('/^(.+?)\\\{(.+)\}$/', $clause, $matches) === 1) {
-            $prefix = trim($matches[1], '\\').'\\';
-            foreach (explode(',', $matches[2]) as $part) {
-                $this->appendUse($result, $prefix.trim($part));
-            }
-
-            return $result;
-        }
-
-        foreach (explode(',', $clause) as $part) {
-            $this->appendUse($result, trim($part));
-        }
-
-        return $result;
-    }
-
-    /** @param  array<string, string>  $result */
-    private function appendUse(array &$result, string $part): void
-    {
-        if ($part === '') {
-            return;
-        }
-
-        if (preg_match('/^(.+?)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/i', $part, $matches) === 1) {
-            $fqcn = ltrim(trim($matches[1]), '\\');
-            $alias = $matches[2];
-        } else {
-            $fqcn = ltrim(trim($part), '\\');
-            $segments = explode('\\', $fqcn);
-            $alias = end($segments) ?: $fqcn;
-        }
-
-        $result[$alias] = $fqcn;
-    }
-
     private function parseSingleName(string $buffer, FileContext $context): ?string
     {
         $name = preg_replace('/\s+/', '', $buffer) ?? $buffer;
@@ -918,9 +830,9 @@ final class ClassMetadataIndex
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexQueueRoutes(string $source, array $tokens, FileContext $context): void
+    private function indexQueueRoutes(string $source, array $tokens, FileContextMap $contexts): void
     {
-        foreach ($this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
+        foreach ($this->facadeAliasesForMap($contexts, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
             $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*route\s*\(/i';
             $ok = preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE);
             if ($ok === false || $ok === 0) {
@@ -928,7 +840,9 @@ final class ClassMetadataIndex
             }
 
             foreach ($matches[0] as [$matched, $offset]) {
-                if ($this->offsetIsNonCode($tokens, $offset)) {
+                $context = $contexts->at($offset);
+                if (! in_array($alias, $this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue'), true)
+                    || $this->offsetIsNonCode($tokens, $offset)) {
                     continue;
                 }
                 $open = $this->tokenIndexAtOrAfterOffset($tokens, $offset + strlen($matched) - 1, '(');
@@ -1020,9 +934,9 @@ final class ClassMetadataIndex
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexQueueForwards(string $source, array $tokens, FileContext $context): void
+    private function indexQueueForwards(string $source, array $tokens, FileContextMap $contexts): void
     {
-        foreach ($this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
+        foreach ($this->facadeAliasesForMap($contexts, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
             $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*forward\s*\(/i';
             $ok = preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE);
             if ($ok === false || $ok === 0) {
@@ -1030,7 +944,9 @@ final class ClassMetadataIndex
             }
 
             foreach ($matches[0] as [$matched, $offset]) {
-                if ($this->offsetIsNonCode($tokens, $offset)) {
+                $context = $contexts->at($offset);
+                if (! in_array($alias, $this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue'), true)
+                    || $this->offsetIsNonCode($tokens, $offset)) {
                     continue;
                 }
                 $open = $this->tokenIndexAtOrAfterOffset($tokens, $offset + strlen($matched) - 1, '(');
@@ -1092,6 +1008,17 @@ final class ClassMetadataIndex
         if ($queue !== null) {
             $this->queueForwards[$queue] = $connection;
         }
+    }
+
+    /** @return list<string> */
+    private function facadeAliasesForMap(FileContextMap $contexts, string $fqcn, string $fallback): array
+    {
+        $aliases = [];
+        foreach ($contexts->contexts() as $context) {
+            $aliases = array_merge($aliases, $this->facadeAliases($context, $fqcn, $fallback));
+        }
+
+        return array_values(array_unique($aliases));
     }
 
     /** @return list<string> */
@@ -1197,7 +1124,7 @@ final class ClassMetadataIndex
     }
 
     /** @param list<Token> $tokens */
-    private function indexEnumDeclarations(array $tokens, FileContext $context): void
+    private function indexEnumDeclarations(array $tokens, FileContextMap $contexts): void
     {
         if (! defined('T_ENUM')) {
             return;
@@ -1208,6 +1135,7 @@ final class ClassMetadataIndex
                 continue;
             }
             $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING);
+            $context = $contexts->at($tokens[$i]['offset']);
             $open = $nameIndex === null ? null : $this->nextText($tokens, $nameIndex + 1, '{');
             $close = $open === null ? null : $this->matchingBrace($tokens, $open);
             if ($nameIndex === null || $open === null || $close === null) {
@@ -1565,16 +1493,6 @@ final class ClassMetadataIndex
         }
 
         return $tokens;
-    }
-
-    private function isNameToken(?int $id): bool
-    {
-        return in_array($id, array_filter([
-            T_STRING,
-            defined('T_NAME_QUALIFIED') ? T_NAME_QUALIFIED : null,
-            defined('T_NAME_FULLY_QUALIFIED') ? T_NAME_FULLY_QUALIFIED : null,
-            defined('T_NS_SEPARATOR') ? T_NS_SEPARATOR : null,
-        ]), true);
     }
 
     /**

@@ -99,4 +99,43 @@ PHP,
         'rules' => [], 'absent' => ['TG001'],
         'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false, 'redis' => true]],
     ],
+
+    'multiple unbracketed namespaces use the correct imports' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\First;
+class Placeholder {}
+namespace App\Second;
+use Illuminate\Support\Facades\DB as Database;
+use Illuminate\Support\Facades\Http as Client;
+Database::transaction(function () { Client::post('https://example.test'); });
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'bracketed namespace imports are analyzed' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\First { class Placeholder {} }
+namespace App\Second {
+    use Illuminate\Support\Facades\DB as Database;
+    use Illuminate\Support\Facades\Http as Client;
+    Database::transaction(function () { Client::post('https://example.test'); });
+}
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'second namespace Eloquent metadata uses its own context' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\First;
+class Placeholder {}
+namespace App\Second;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB as Database;
+class Audit extends Model { protected $connection = 'pgsql'; }
+Database::connection('mysql')->transaction(function () { Audit::create(['ok' => 1]); });
+PHP,
+        'rules' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
 ];

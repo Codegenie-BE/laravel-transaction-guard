@@ -10,6 +10,7 @@ foreach ([
     'src/Analysis/AnalysisConfig.php',
     'src/Analysis/ClassMetadata.php',
     'src/Analysis/FileContext.php',
+    'src/Analysis/FileContextMap.php',
     'src/Analysis/ClassMetadataIndex.php',
     'src/Analysis/SourceIndex.php',
     'src/Analysis/SourceScanner.php',
