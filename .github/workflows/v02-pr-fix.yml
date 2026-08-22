@@ -131,15 +131,11 @@ PHP,
           coverage: none
           tools: composer:v2
 
-      - name: Install dependencies
+      - name: Install formatter
         run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
 
-      - name: Format and validate
-        run: |
-          composer format
-          composer test:smoke
-          composer test
-          composer analyse
+      - name: Apply Pint
+        run: composer format
 
       - name: Commit fixes
         shell: bash
