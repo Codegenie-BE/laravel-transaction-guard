@@ -20,76 +20,6 @@ env:
   COMPOSER_MAX_PARALLEL_HTTP: 4
 
 jobs:
-  audit-writer:
-    name: Apply reviewed audit source change
-    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'audit/')
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout audit branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.head_ref }}
-          fetch-depth: 0
-
-      - name: Check audit request marker
-        id: request
-        shell: bash
-        run: |
-          if [ -f .audit-request ]; then
-            echo 'apply=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'apply=false' >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Apply deterministic audit change
-        if: steps.request.outputs.apply == 'true'
-        env:
-          AUDIT_BRANCH: ${{ github.head_ref }}
-        run: python3 .github/audit_writer.py "${AUDIT_BRANCH}"
-
-      - name: Setup PHP
-        if: steps.request.outputs.apply == 'true'
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
-        with:
-          php-version: '8.5'
-          coverage: none
-          tools: composer:v2
-
-      - name: Install dependencies
-        if: steps.request.outputs.apply == 'true'
-        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-
-      - name: Format changed source
-        if: steps.request.outputs.apply == 'true'
-        run: composer format
-
-      - name: Validate regression matrix
-        if: steps.request.outputs.apply == 'true'
-        run: composer test:smoke
-
-      - name: Validate Pest suite
-        if: steps.request.outputs.apply == 'true'
-        run: composer test
-
-      - name: Validate PHPStan max
-        if: steps.request.outputs.apply == 'true'
-        run: composer analyse
-
-      - name: Commit validated audit change
-        if: steps.request.outputs.apply == 'true'
-        env:
-          AUDIT_BRANCH: ${{ github.head_ref }}
-        shell: bash
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m "audit: apply ${AUDIT_BRANCH}"
-          git push origin "HEAD:${AUDIT_BRANCH}"
-
   quality:
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
     runs-on: ubuntu-latest
@@ -163,6 +93,31 @@ jobs:
       - name: Run static analysis
         run: composer analyse
 
+  lowest:
+    name: Lowest supported dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: composer:v2
+
+      - name: Pin lowest supported Laravel 12 test dependencies
+        run: composer require --dev 'orchestra/testbench:^10.0' 'pestphp/pest:^3.0' --no-update --no-interaction
+
+      - name: Resolve lowest supported dependency set
+        run: composer update --prefer-lowest --prefer-stable --with-all-dependencies --no-interaction --no-progress
+
+      - name: Run complete quality gate
+        run: composer check:all
+
   coverage:
     name: Coverage / PHP 8.5 / Laravel 13
     runs-on: ubuntu-latest
@@ -192,12 +147,14 @@ jobs:
     name: Publish validated changelog release
     needs:
       - quality
+      - lowest
       - coverage
     if: >-
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.quality.result == 'success' &&
+      needs.lowest.result == 'success' &&
       needs.coverage.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -211,6 +168,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Setup PHP and Composer
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate release distribution before tagging
+        shell: bash
+        run: |
+          composer validate --strict
+          rm -rf build
+          composer archive --format=zip --dir=build
+          archive="$(find build -maxdepth 1 -type f -name '*.zip' | head -n 1)"
+          test -n "${archive}"
+          unzip -l "${archive}" > /tmp/transaction-guard-archive.txt
+          if grep -E '(^|/)(tests|tools|docs|\.github|\.audit)/' /tmp/transaction-guard-archive.txt; then
+            echo 'Release archive contains development-only files.' >&2
+            exit 1
+          fi
 
       - name: Determine release tag
         id: release
