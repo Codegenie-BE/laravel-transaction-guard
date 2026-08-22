@@ -49,13 +49,13 @@ jobs:
       - name: Validate coverage
         run: composer test:coverage
 
-      - name: Commit validated final changes
+      - name: Commit validated non-workflow changes
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github CHANGELOG.md README.md composer.json config docs src tests tools
+          git add CHANGELOG.md README.md composer.json config docs src tests tools .github/CODEOWNERS
           if git diff --cached --quiet; then
-            echo 'No final source changes to commit.'
+            echo 'No final non-workflow changes to commit.'
           else
             git commit -m 'release: finalize v0.3.0 hardening'
             git push origin HEAD:release/v0.3.0-hardening
