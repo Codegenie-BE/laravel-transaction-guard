@@ -115,8 +115,23 @@ jobs:
       - name: Resolve lowest supported dependency set
         run: composer update --prefer-lowest --prefer-stable --with-all-dependencies --no-interaction --no-progress
 
-      - name: Run complete quality gate
-        run: composer check:all
+      - name: Validate Composer metadata
+        run: composer validate --strict
+
+      - name: Audit lowest dependency set
+        run: composer audit --no-interaction
+
+      - name: Validate optimized autoloading
+        run: composer dump-autoload --optimize --strict-psr --no-interaction
+
+      - name: Run dependency-free regression matrix
+        run: composer test:smoke
+
+      - name: Run Pest suite on lowest dependencies
+        run: composer test
+
+      - name: Run static analysis on lowest dependencies
+        run: composer analyse
 
   coverage:
     name: Coverage / PHP 8.5 / Laravel 13
