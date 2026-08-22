@@ -6,6 +6,9 @@ namespace Codegenie\TransactionGuard\Analysis;
 
 final readonly class AnalysisConfig
 {
+    /** @var array<string, true> */
+    private array $disabledRuleLookup;
+
     /**
      * @param  array<string, bool>  $queueAfterCommitByConnection
      * @param  list<string>  $customSideEffectPatterns
@@ -19,6 +22,8 @@ final readonly class AnalysisConfig
         public bool $detectReadHttpCalls = false,
         public string $defaultDatabaseConnection = '@default',
     ) {
+        $this->disabledRuleLookup = array_fill_keys($this->disabledRules, true);
+
         foreach ($this->customSideEffectPatterns as $pattern) {
             set_error_handler(static fn (): bool => true);
             try {
@@ -35,7 +40,7 @@ final readonly class AnalysisConfig
 
     public function ruleEnabled(string $rule): bool
     {
-        return ! in_array($rule, $this->disabledRules, true);
+        return ! isset($this->disabledRuleLookup[$rule]);
     }
 
     public function queueDispatchesAfterCommit(?string $connection = null): bool
