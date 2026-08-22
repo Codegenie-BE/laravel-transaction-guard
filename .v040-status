@@ -1,10 +1,15 @@
 v0.4.0 hardening patch applied
 Traceback (most recent call last):
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_runner3.py", line 21, in <module>
+    runpy.run_path(str(root / 'tools/v040_runner2.py'), run_name='__main__')
+  File "<frozen runpy>", line 286, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
   File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_runner2.py", line 31, in <module>
     runpy.run_path(str(root / 'tools/v040_runner.py'), run_name='__main__')
   File "<frozen runpy>", line 286, in run_path
   File "<frozen runpy>", line 98, in _run_module_code
   File "<frozen runpy>", line 88, in _run_code
-  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_runner.py", line 105, in <module>
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_runner.py", line 106, in <module>
     raise RuntimeError(f'cache scanner fallback matched {count}')
 RuntimeError: cache scanner fallback matched 0
