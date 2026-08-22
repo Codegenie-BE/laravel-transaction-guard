@@ -64,9 +64,9 @@ scanner = scanner.replace(
     1,
 )
 
-# Explicitly cover Laravel's multi-column counter mutations. Insert the focused
-# fallback strictly inside scanCrossConnectionDatabaseWrites() so whitespace or
-# neighboring facade scanners cannot affect the patch location.
+# Bound all explicit DB::connection(...)->write matching to the nearest
+# connection selector. The previous pattern could begin at an outer transaction
+# connection and consume a nested DB::connection(...) before reaching the write.
 cross_pos = scanner.find('    private function scanCrossConnectionDatabaseWrites')
 if cross_pos < 0:
     raise RuntimeError('cross-connection scanner not found')
@@ -74,6 +74,14 @@ next_pos = scanner.find('    private function reportCrossConnectionWrite', cross
 if next_pos < 0:
     raise RuntimeError('cross-connection scanner end not found')
 cross_segment = scanner[cross_pos:next_pos]
+old_chain = "\\s*->(?:(?![;{}]).)*?\\b(?P<method>'.$mutations.')\\s*\\(/is';"
+new_chain = "\\s*->(?:(?![;{}]|'.preg_quote($alias, '/').'\\s*::\\s*connection).)*?\\b(?P<method>'.$mutations.')\\s*\\(/is';"
+if old_chain in cross_segment:
+    cross_segment = cross_segment.replace(old_chain, new_chain, 1)
+
+# Explicitly cover Laravel's multi-column counter mutations with the same
+# nearest-connection rule. This dedicated pattern has no named method capture,
+# so it is not affected by method-chain capture filtering.
 mutation_pos = cross_segment.find('$mutations = OperationCatalog::alternation(OperationCatalog::QUERY_MUTATIONS);')
 if mutation_pos < 0:
     raise RuntimeError('cross-connection mutation catalog not found')
@@ -83,7 +91,7 @@ if line_end < 0:
 counter_block = r'''
 
         foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\DB', 'DB') as $alias) {
-            $counterPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*(?P<quote>[\'\"])(?P<connection>[^\'\"]+)\k<quote>\s*\)\s*->(?:(?![;{}]).)*?\b(?:incrementEach|decrementEach)\s*\(/is';
+            $counterPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*(?P<quote>[\'\"])(?P<connection>[^\'\"]+)\k<quote>\s*\)\s*->(?:(?![;{}]|'.preg_quote($alias, '/').'\s*::\s*connection).)*?\b(?:incrementEach|decrementEach)\s*\(/is';
             foreach ($this->matches($counterPattern) as $match) {
                 $this->reportCrossConnectionWrite($findings, $match['offset'], $this->captured($match, 'connection'));
             }
