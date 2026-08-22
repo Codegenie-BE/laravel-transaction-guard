@@ -9,6 +9,11 @@ foreach ([
     'src/Analysis/Finding.php',
     'src/Analysis/AnalysisConfig.php',
     'src/Analysis/ClassMetadata.php',
+    'src/Analysis/OperationCatalog.php',
+    'src/Analysis/DatabaseDriverPolicy.php',
+    'src/Analysis/StaticExpressionResolver.php',
+    'src/Analysis/MetadataAttributeResolver.php',
+    'src/Analysis/ModelRelationExtractor.php',
     'src/Analysis/FileContext.php',
     'src/Analysis/FileContextMap.php',
     'src/Analysis/ClassMetadataIndex.php',
@@ -50,13 +55,22 @@ function benchmarkTransactionGuard(string $name, int $files, callable $sourceFac
     }
 }
 
+$jsonOutput = in_array('--json', $argv, true);
 $workloads = [
     'transaction-free-1000' => [1000, static fn (int $file): string => "<?php\nnamespace App\\Services; final class Service{$file} { public function run(): int { return 1; } }\n"],
     'safe-transactions-250' => [250, static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\DB; final class Service{$file} { public function run(): void { DB::transaction(fn () => DB::table('orders')->update(['paid' => true])); } }\n"],
     'side-effect-heavy-250' => [250, static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\DB; use Illuminate\\Support\\Facades\\Http; final class Service{$file} { public function run(): void { DB::transaction(fn () => Http::post('https://example.test')); } }\n"],
     'metadata-heavy-250' => [250, static fn (int $file): string => "<?php\nnamespace App\\Jobs; use Illuminate\\Contracts\\Queue\\ShouldQueue; class Base{$file} implements ShouldQueue {} class Service{$file} extends Base{$file} {}\n"],
+    'mixed-laravel-100' => [100, static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\{DB,Http,Cache,Redis}; final class Service{$file} { public function run(): void { DB::transaction(function () { Http::post('https://example.test'); Cache::put('k', 1); Redis::set('k', 'v'); DB::table('orders')->update(['paid'=>true]); }); } }\n"],
 ];
+$results = [];
 foreach ($workloads as $name => [$files, $factory]) {
     $result = benchmarkTransactionGuard($name, $files, $factory);
-    printf("%s: %d files in %.2f ms; peak delta %.2f MiB; %d findings.\n", $name, $result['files'], $result['ms'], $result['memory'], $result['findings']);
+    $results[$name] = $result;
+    if (! $jsonOutput) {
+        printf("%s: %d files in %.2f ms; peak delta %.2f MiB; %d findings.\n", $name, $result['files'], $result['ms'], $result['memory'], $result['findings']);
+    }
+}
+if ($jsonOutput) {
+    echo json_encode($results, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR).PHP_EOL;
 }

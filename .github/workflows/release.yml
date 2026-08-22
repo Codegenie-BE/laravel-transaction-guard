@@ -53,9 +53,23 @@ jobs:
           composer archive --format=zip --dir=build
           archive="$(find build -maxdepth 1 -type f -name '*.zip' | head -n 1)"
           test -n "${archive}"
-          unzip -l "${archive}" > /tmp/transaction-guard-archive.txt
-          if grep -E '(^|/)(tests|tools|docs|\.github|\.audit)/' /tmp/transaction-guard-archive.txt; then
-            echo 'Release archive contains development-only files.' >&2
+
+          invalid="$({
+            unzip -Z1 "${archive}" | awk '
+              {
+                entry=$0
+                sub(/^[^/]+\//, "", entry)
+                if (entry == "" || entry ~ /\/$/) next
+                if (entry == "composer.json" || entry == "README.md" || entry == "LICENSE.md" || entry == "CHANGELOG.md") next
+                if (entry ~ /^src\// || entry ~ /^config\//) next
+                print entry
+              }
+            '
+          } || true)"
+
+          if [ -n "${invalid}" ]; then
+            echo 'Release archive contains files outside the explicit distribution allowlist:' >&2
+            printf '%s\n' "${invalid}" >&2
             exit 1
           fi
 

@@ -29,7 +29,12 @@ final class SourceIndex
 
         $length = strlen($source);
         for ($offset = 0; $offset < $length; $offset++) {
-            if ($source[$offset] === "\n") {
+            if ($source[$offset] === "\r") {
+                if ($offset + 1 < $length && $source[$offset + 1] === "\n") {
+                    $offset++;
+                }
+                $this->lineStarts[] = $offset + 1;
+            } elseif ($source[$offset] === "\n") {
                 $this->lineStarts[] = $offset + 1;
             }
         }

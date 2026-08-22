@@ -112,3 +112,10 @@ Manual transaction state carries its database connection. This both prevents a c
 The analyzer resolves simple local closure variables passed to `DB::transaction()`, simple local job/event/notification/broadcast payload assignments, and locally assigned Laravel HTTP/filesystem/cache/Redis/process/database handles. Any later unknown reassignment invalidates the inference. This deliberately increases signal without turning Transaction Guard into a general PHP call-graph engine.
 
 Statically known Eloquent model connections, including Laravel 13 `#[Connection]`, participate in `TG021` cross-connection analysis. `TG012` also uses the configured database driver: MySQL/MariaDB implicit-commit hazards remain critical, while drivers with broadly transactional DDL remain visible as warnings rather than being mislabeled as identical MySQL semantics.
+
+
+## Pre-dispatch lifecycle
+
+Queue `after_commit` governs queue enqueue timing; it does not retroactively defer arbitrary work performed while constructing a `PendingDispatch`. Laravel 13 can call `prepareForDispatch()`, acquire `ShouldBeUnique` locks and acquire debounce locks before the dispatcher reaches queue after-commit handling. Transaction Guard therefore reports these pre-dispatch lifecycle effects independently from TG001.
+
+Cache locks and `RateLimiter` operations are also external cache state. Redis pipeline/transaction callbacks are inspected when inline; known read-only callbacks are ignored, mutating callbacks are reported, and unresolved callbacks remain conservative.

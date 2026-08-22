@@ -52,6 +52,9 @@ return [
     /* Fail instead of reporting a clean scan when no PHP files are discovered. */
     'allow_empty_scan' => false,
 
+    /* Treat unresolved DB::transaction() callbacks (TG014) as CI failures. */
+    'fail_on_unresolved_transaction' => false,
+
     /* info | warning | error | critical | never */
     'fail_on' => 'warning',
 ];

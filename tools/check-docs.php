@@ -15,11 +15,16 @@ if ($rules === false || $readme === false) {
 
 $failed = [];
 foreach (RuleCatalog::ids() as $id) {
+    $definition = RuleCatalog::definition($id);
     if (! str_contains($rules, $id) && ! RuleCatalog::isDiagnostic($id)) {
         $failed[] = "docs/RULES.md is missing {$id}";
     }
     if (! str_contains($readme, $id)) {
         $failed[] = "README.md is missing {$id}";
+    }
+    $severity = preg_quote($definition['severity'], '/');
+    if (preg_match('/\\| `'.preg_quote($id, '/').'` \\| '.$severity.' \\|/i', $readme) !== 1) {
+        $failed[] = "README.md severity is out of sync for {$id}: expected {$definition['severity']}";
     }
 }
 

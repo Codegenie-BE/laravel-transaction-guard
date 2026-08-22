@@ -27,6 +27,7 @@ final readonly class AnalysisConfig
         public string $defaultDatabaseConnection = '@default',
         public array $databaseDriverByConnection = [],
         public bool $allowEmptyScan = false,
+        public bool $failOnUnresolvedTransaction = false,
         public string $projectRoot = '',
     ) {
         $normalizedDisabled = [];
@@ -44,7 +45,7 @@ final readonly class AnalysisConfig
         $compiledCustomSideEffectPatterns = [];
 
         foreach ($this->customSideEffectPatterns as $pattern) {
-            $regex = str_starts_with($pattern, '/') ? $pattern : '/'.str_replace('/', '\\/', $pattern).'/';
+            $regex = $this->compileCustomRegex($pattern);
             set_error_handler(static fn (): bool => true);
             try {
                 $valid = preg_match($regex, '') !== false;
@@ -59,6 +60,30 @@ final readonly class AnalysisConfig
         }
 
         $this->compiledCustomSideEffectPatterns = $compiledCustomSideEffectPatterns;
+    }
+
+    private function compileCustomRegex(string $pattern): string
+    {
+        $pattern = trim($pattern);
+        if ($pattern === '') {
+            throw new \InvalidArgumentException('Custom side-effect regular expressions cannot be empty.');
+        }
+
+        $first = $pattern[0];
+        if (! ctype_alnum($first) && ! ctype_space($first) && $first !== '\\') {
+            $last = strrpos($pattern, $first);
+            if ($last !== false && $last > 0 && preg_match('/^[imsxuADUJu]*$/', substr($pattern, $last + 1)) === 1) {
+                return $pattern;
+            }
+        }
+
+        foreach (['~', '#', '%', '!', '@', ';'] as $delimiter) {
+            if (! str_contains($pattern, $delimiter)) {
+                return $delimiter.$pattern.$delimiter;
+            }
+        }
+
+        return '/'.str_replace('/', '\/', $pattern).'/';
     }
 
     /** @return list<string> */

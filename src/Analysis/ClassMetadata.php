@@ -22,6 +22,7 @@ final readonly class ClassMetadata
         public array $traits = [],
         public ?string $queueName = null,
         public ?bool $afterCommitOverride = null,
+        public bool $debounced = false,
     ) {}
 
     public function implements(string $interface): bool
@@ -41,6 +42,27 @@ final readonly class ClassMetadata
     {
         return $this->implements('Illuminate\\Contracts\\Queue\\ShouldQueue')
             || $this->implements('Illuminate\\Contracts\\Queue\\ShouldQueueAfterCommit');
+    }
+
+    public function preparesForDispatch(): bool
+    {
+        return $this->implements('Illuminate\Contracts\Queue\PreparesForDispatch');
+    }
+
+    public function uniqueBeforeDispatch(): bool
+    {
+        return $this->implements('Illuminate\Contracts\Queue\ShouldBeUnique');
+    }
+
+    public function usesEventDispatchableTrait(): bool
+    {
+        foreach ($this->traits as $trait) {
+            if (strcasecmp(ltrim($trait, '\\'), 'Illuminate\Foundation\Events\Dispatchable') === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function explicitlyBeforeCommit(): bool

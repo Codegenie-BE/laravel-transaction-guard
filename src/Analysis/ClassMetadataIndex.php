@@ -27,6 +27,9 @@ final class ClassMetadataIndex
     /** @var array<string, string> */
     private array $modelConnections = [];
 
+    /** @var array<string, array<string, string>> */
+    private array $modelRelations = [];
+
     /** @var array<string, list<string>> */
     private array $interfaceParents = [];
 
@@ -119,6 +122,38 @@ final class ClassMetadataIndex
         }
 
         return $this->modelConnection($metadata->parent);
+    }
+
+    public function modelRelationTarget(string $class, string $relation): ?string
+    {
+        $key = strtolower(ltrim($class, '\\'));
+        $relation = strtolower($relation);
+        if (isset($this->modelRelations[$key][$relation])) {
+            return $this->modelRelations[$key][$relation];
+        }
+
+        $metadata = $this->metadata($class);
+
+        return $metadata?->parent !== null ? $this->modelRelationTarget($metadata->parent, $relation) : null;
+    }
+
+    public function isDispatchableEvent(string $class): bool
+    {
+        $metadata = $this->metadata($class);
+        if ($metadata === null) {
+            return false;
+        }
+        if ($metadata->eventAfterCommit() || $metadata->usesEventDispatchableTrait()) {
+            return true;
+        }
+
+        foreach ($this->traitsForClass($class) as $trait) {
+            if (strcasecmp(ltrim($trait, '\\'), 'Illuminate\Foundation\Events\Dispatchable') === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function isEloquentModel(string $class): bool
@@ -330,6 +365,13 @@ final class ClassMetadataIndex
 
             $attributeQueue = $this->queueAttributeForDeclaration($source, $tokens[$i]['offset'], $context);
             $attributeConnection = $this->connectionAttributeForDeclaration($source, $tokens[$i]['offset'], $context);
+            $debounced = MetadataAttributeResolver::hasClassAttribute(
+                $source,
+                $tokens[$i]['offset'],
+                $context,
+                'Illuminate\Queue\Attributes\DebounceFor',
+                'DebounceFor',
+            );
             $queueConnection = $constructorConnection ?? $propertyConnection;
             $queueName = $constructorQueue ?? $attributeQueue ?? $propertyQueue;
             $afterCommitOverride = $constructorOverride ?? $propertyAfterCommit;
@@ -341,6 +383,15 @@ final class ClassMetadataIndex
             $modelConnection = $this->modelConnectionForClass($source, $tokens, $i, $openBrace + 1, $closeBrace - 1, $context);
             if ($modelConnection !== null) {
                 $this->modelConnections[strtolower($fqcn)] = $modelConnection;
+            }
+            $relations = ModelRelationExtractor::extract(
+                $source,
+                $tokens[$openBrace]['offset'] + 1,
+                $tokens[$closeBrace]['offset'],
+                $context,
+            );
+            if ($relations !== []) {
+                $this->modelRelations[strtolower($fqcn)] = $relations;
             }
 
             $this->classes[strtolower($fqcn)] = new ClassMetadata(
@@ -355,6 +406,7 @@ final class ClassMetadataIndex
                 traits: $traits,
                 queueName: $queueName,
                 afterCommitOverride: $afterCommitOverride,
+                debounced: $debounced,
             );
 
             $i = $closeBrace;
@@ -1219,6 +1271,7 @@ final class ClassMetadataIndex
                 traits: $metadata->traits,
                 queueName: $metadata->queueName,
                 afterCommitOverride: $metadata->afterCommitOverride,
+                debounced: $metadata->debounced,
             );
         }
     }
@@ -1261,6 +1314,7 @@ final class ClassMetadataIndex
             traits: $metadata->traits,
             queueName: $metadata->queueName,
             afterCommitOverride: $metadata->afterCommitOverride ?? $parent->afterCommitOverride,
+            debounced: $metadata->debounced || $parent->debounced,
         );
     }
 
