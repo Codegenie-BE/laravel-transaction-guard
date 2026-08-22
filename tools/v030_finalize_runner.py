@@ -44,25 +44,21 @@ write('src/Analysis/ClassMetadataIndex.php', text)
 code = code[:start] + replacement + code[end:]
 
 # Insert namespace-relative resolution immediately before FileContext resolves
-# imported aliases, instead of matching a PHP backslash literal in source text.
+# imported aliases, without matching a PHP backslash literal.
 start = code.index('# FileContext understands namespace-relative names.')
 end = code.index('# SourceScanner chooses context by match offset and sees aliases from all sections.')
 replacement = r'''# FileContext understands namespace-relative names.
 context_source = read('src/Analysis/FileContext.php')
-marker = "        [$first] = explode('\\\\', $name, 2);"
+marker = '        [$first] = explode('
 pos = context_source.find(marker)
 if pos < 0:
-    marker = '        [$first] = explode('
-    pos = context_source.find(marker)
-if pos < 0:
     raise RuntimeError('FileContext alias-resolution marker not found')
-insertion = r'''        if (str_starts_with(strtolower($name), 'namespace\\')) {
-            $relative = substr($name, strlen('namespace\\'));
-
-            return $this->namespace !== '' ? $this->namespace.'\\'.$relative : $relative;
-        }
-
-'''
+insertion = (
+    "        if (str_starts_with(strtolower($name), 'namespace\\\\')) {\n"
+    "            $relative = substr($name, strlen('namespace\\\\'));\n\n"
+    "            return $this->namespace !== '' ? $this->namespace.'\\\\'.$relative : $relative;\n"
+    "        }\n\n"
+)
 context_source = context_source[:pos] + insertion + context_source[pos:]
 write('src/Analysis/FileContext.php', context_source)
 
