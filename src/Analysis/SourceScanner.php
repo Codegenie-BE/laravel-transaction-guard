@@ -1419,7 +1419,10 @@ final class SourceScanner
         return false;
     }
 
-    /** @return list<array{offset:int,matches:array<int|string,array{0:string,1:int}|string>}> */
+    /**
+     * @param  list<string>  $allowNonCodeCaptures
+     * @return list<array{offset:int,matches:array<int|string,array{0:string,1:int}|string>}>
+     */
     private function matches(string $pattern, array $allowNonCodeCaptures = []): array
     {
         $result = [];
@@ -1439,7 +1442,10 @@ final class SourceScanner
         return $result;
     }
 
-    /** @param array<int|string, mixed> $match */
+    /**
+     * @param  array<int|string, mixed>  $match
+     * @param  list<string>  $allowNonCodeCaptures
+     */
     private function semanticCaptureIsNonCode(array $match, array $allowNonCodeCaptures = []): bool
     {
         $allowed = array_fill_keys($allowNonCodeCaptures, true);
