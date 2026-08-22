@@ -1439,7 +1439,6 @@ final class SourceScanner
         return $result;
     }
 
-
     /** @param array<int|string, mixed> $match */
     private function semanticCaptureIsNonCode(array $match, array $allowNonCodeCaptures = []): bool
     {
@@ -1464,8 +1463,8 @@ final class SourceScanner
         return false;
     }
 
-
-    private function offsetIsNonCode(int $offset): bool    {
+    private function offsetIsNonCode(int $offset): bool
+    {
         return $this->sourceIndex->isNonCode($offset);
     }
 
