@@ -1,0 +1,81 @@
+name: Audit point 1 target
+
+on:
+  pull_request_target:
+    types: [synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor == 'jordyloeuille' && github.event.pull_request.head.ref == 'fix/global-dispatch-detection'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: fix/global-dispatch-detection
+          fetch-depth: 0
+      - name: Apply fix
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('src/Analysis/SourceScanner.php')
+          text = source.read_text()
+          old = """                $metadata = $this->classIndex->metadata($resolved);\n                $method = $this->captured($match, 'method');\n                $statement = $this->statementAt($offset);\n                $looksLikeJob = $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n"""
+          new = """                $metadata = $this->classIndex->metadata($resolved);\n                $method = $this->captured($match, 'method');\n                $statement = $this->statementAt($offset);\n                $globalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\\\\\?dispatch\\\\s*\\\\(\\\\s*new\\\\s+/i', $statement) === 1;\n                $looksLikeJob = $globalDispatchHelper\n                    || $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n"""
+          if old in text:
+              source.write_text(text.replace(old, new, 1))
+          elif '$globalDispatchHelper' not in text:
+              raise SystemExit('dispatch block not found')
+          matrix = Path('tests/Support/ScenarioMatrix.php')
+          text = matrix.read_text()
+          marker = "    'fully qualified DB and Http facades are detected' => [\n"
+          scenario = r'''    'global dispatch helper detects job outside Jobs namespace' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Work;
+use Illuminate\Support\Facades\DB;
+class RecalculateOrder {}
+DB::transaction(function () { dispatch(new RecalculateOrder()); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'global dispatch helper outside Jobs namespace is safe after commit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Work;
+use Illuminate\Support\Facades\DB;
+class RecalculateOrder {}
+DB::transaction(function () { dispatch(new RecalculateOrder())->afterCommit(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+'''
+          if 'global dispatch helper detects job outside Jobs namespace' not in text:
+              matrix.write_text(text.replace(marker, scenario + marker, 1))
+          PY
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: none
+          tools: composer:v2
+      - run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+      - run: composer format
+      - run: composer test:smoke
+      - run: composer test
+      - run: composer analyse
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git checkout origin/main -- .github/workflows/tests.yml
+          git add src/Analysis/SourceScanner.php tests/Support/ScenarioMatrix.php .github/workflows/tests.yml
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: detect global dispatch outside Jobs namespaces'
+            git push origin HEAD:fix/global-dispatch-detection
+          fi
