@@ -171,11 +171,52 @@ PHP,
     'Bus dispatch afterCommit is safe' => [
         'code' => <<<'PHP'
 <?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
-DB::transaction(function () { Bus::dispatch((new \App\Jobs\ProcessOrder())->afterCommit()); });
+class ProcessOrder implements ShouldQueue { public function afterCommit(): static { return $this; } }
+DB::transaction(function () { Bus::dispatch((new ProcessOrder())->afterCommit()); });
 PHP,
         'rules' => [],
+        'absent' => ['TG001', 'TG016'],
+    ],
+    'Bus dispatch ShouldQueueAfterCommit command is safe' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueueAfterCommit {}
+DB::transaction(function () { Bus::dispatch(new ProcessOrder()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001', 'TG016'],
+    ],
+    'Bus dispatch known queued command is flagged before commit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { Bus::dispatch(new ProcessOrder()); });
+PHP,
+        'rules' => ['TG001'],
+        'absent' => ['TG016'],
+    ],
+    'Bus dispatch known non queueable command is synchronous' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Commands;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+class RecalculateOrder {}
+DB::transaction(function () { Bus::dispatch(new RecalculateOrder()); });
+PHP,
+        'rules' => ['TG016'],
         'absent' => ['TG001'],
     ],
     'Bus dispatchSync is reported' => [
