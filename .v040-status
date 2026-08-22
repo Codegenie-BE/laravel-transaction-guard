@@ -1,8 +1,10 @@
 Traceback (most recent call last):
-  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_runner.py", line 17, in <module>
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_runner.py", line 33, in <module>
     exec(compile(code, str(patch), 'exec'), namespace)
-  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_patch.py", line 1126, in <module>
-    ''',
-  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_patch.py", line 22, in replace_once
-    raise RuntimeError(f"missing anchor in {path}: {old[:160]!r}")
-RuntimeError: missing anchor in src/Analysis/SourceScanner.php: "        $mutating = 'set|setex|psetex|mset|del|unlink|incr|incrby|incrbyfloat|decr|decrby|hset|hmset|hdel|hincrby|lpush|rpush|lpop|rpop|ltrim|sadd|srem|smove|za"
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_patch.py", line 1133, in <module>
+    $offset = $match['offset'];
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_patch.py", line 34, in regex_once
+    def insert_before(path: str, anchor: str, block: str) -> None:
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: regex anchor in src/Analysis/SourceScanner.php matched 0: "            \\$commandPattern = '/\\(\\?<!\\[A-Za-z0-9_\\]\\)'.*?            \\}\\n        \\}\\n    \\}\\n\\n    /\\*\\* @param  list<"
