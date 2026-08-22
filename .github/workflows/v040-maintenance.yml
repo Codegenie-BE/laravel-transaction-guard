@@ -41,7 +41,7 @@ jobs:
         run: |
           set -o pipefail
           {
-            python3 tools/v040_runner2.py &&
+            python3 tools/v040_runner3.py &&
             find src tests tools -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null &&
             composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress &&
             composer format &&
