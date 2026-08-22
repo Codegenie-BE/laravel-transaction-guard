@@ -138,3 +138,4 @@ scanner = scanner.replace(
 scanner_path.write_text(scanner)
 
 print('v0.3.0 final namespace/release patch applied with complete match-context preservation')
+print('split-delivery trigger')
