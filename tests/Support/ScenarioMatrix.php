@@ -946,6 +946,69 @@ DB::transaction(function () { dispatch_sync(new ProcessOrder()); });
 PHP,
         'rules' => ['TG016'],
     ],
+    'locally assigned queued job variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { $job = new ProcessOrder(); dispatch($job); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'locally assigned non queueable job variable is synchronous' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Actions;
+use Illuminate\Support\Facades\DB;
+class RecalculateOrder {}
+DB::transaction(function () { $job = new RecalculateOrder(); dispatch($job); });
+PHP,
+        'rules' => ['TG016'],
+        'absent' => ['TG001'],
+    ],
+    'locally reassigned job variable is not trusted as original type' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+class SafeJob implements ShouldQueueAfterCommit {}
+DB::transaction(function () { $job = new SafeJob(); $job = make_job(); dispatch($job); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'locally assigned event variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Support\Facades\DB;
+class OrderCreated {}
+DB::transaction(function () { $event = new OrderCreated(); event($event); });
+PHP,
+        'rules' => ['TG002'],
+    ],
+    'locally assigned notification variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Notifications;
+use Illuminate\Support\Facades\DB;
+class ReceiptReady {}
+DB::transaction(function () { $notification = new ReceiptReady(); $user->notify($notification); });
+PHP,
+        'rules' => ['TG004'],
+    ],
+    'locally assigned broadcast variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Support\Facades\DB;
+class OrderChanged {}
+DB::transaction(function () { $event = new OrderChanged(); broadcast($event); });
+PHP,
+        'rules' => ['TG005'],
+    ],
     'global dispatch helper unsafe queued job is flagged' => [
         'code' => <<<'PHP'
 <?php
