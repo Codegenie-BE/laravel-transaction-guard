@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import runpy
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,7 +29,7 @@ runpy.run_path(str(script), run_name="__main__")
 
 scanner = Path("src/Analysis/SourceScanner.php")
 text = scanner.read_text()
-early_sort = "            usort($this->preScanFindings, static fn (Finding $a, Finding $b): int => [$a->line, -$a->severity->value, $a->rule] <=> [$b->line, -$b->severity->value, $b->rule]);\n\n"
+early_sort = "            usort($this->preScanFindings, static fn (Finding $a, Finding $b): int => [$a->line, -$a->severity->value, $a->rule] <=> [$b->line, -$b->severity->value, $b->rule]);\\n\\n"
 if early_sort not in text:
     raise SystemExit("pre-scan sort marker not found")
 text = text.replace(early_sort, "", 1)
@@ -75,6 +76,11 @@ new = '''        ])->expectsOutputToContain('"version": "2.1.0"')
 if old not in text:
     raise SystemExit("SARIF command assertion marker not found")
 command_test.write_text(text.replace(old, new, 1))
+
+# The Actions token can validate normal source changes but cannot update workflow
+# files without the workflows scope. Keep workflow files unchanged in this
+# commit; they are applied separately through the authenticated repository API.
+subprocess.run(["git", "checkout", "HEAD", "--", ".github/workflows"], check=True)
 
 script.unlink(missing_ok=True)
 Path("tools/maintenance.php").unlink(missing_ok=True)
