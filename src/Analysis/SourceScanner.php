@@ -1110,7 +1110,6 @@ final class SourceScanner
         }
     }
 
-
     /** @return list<TransactionRegion> */
     private function findClosureTransactions(): array
     {
@@ -1213,7 +1212,6 @@ final class SourceScanner
         return $regions;
     }
 
-
     /** @return list<DatabaseControlCall> */
     private function manualControlCalls(): array
     {
@@ -1236,7 +1234,6 @@ final class SourceScanner
 
         return $calls;
     }
-
 
     /**
      * @param  DatabaseControlCall  $start
@@ -1348,6 +1345,7 @@ final class SourceScanner
 
         return null;
     }
+
     private function callableScopeAt(int $offset): string
     {
         $best = null;
