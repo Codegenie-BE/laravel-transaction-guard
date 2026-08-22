@@ -10,6 +10,7 @@ foreach ([
     'src/Analysis/ClassMetadata.php',
     'src/Analysis/FileContext.php',
     'src/Analysis/ClassMetadataIndex.php',
+    'src/Analysis/SourceIndex.php',
     'src/Analysis/SourceScanner.php',
     'src/Analysis/AnalysisResult.php',
     'src/Analysis/Baseline.php',
@@ -46,6 +47,7 @@ foreach ($cases as $name => $case) {
         customSideEffectPatterns: (array) ($cfg['custom_side_effect_patterns'] ?? []),
         disabledRules: (array) ($cfg['disabled_rules'] ?? []),
         detectReadHttpCalls: (bool) ($cfg['detect_read_http_calls'] ?? false),
+        defaultDatabaseConnection: (string) ($cfg['database_default'] ?? '@default'),
     );
 
     $index = ClassMetadataIndex::fromFiles([$phpFile]);

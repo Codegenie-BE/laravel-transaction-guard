@@ -48,6 +48,7 @@ final class TransactionGuardCommand extends Command
                 customSideEffectPatterns: array_values(array_filter((array) config('transaction-guard.custom_side_effect_patterns', []), 'is_string')),
                 disabledRules: array_values(array_filter((array) config('transaction-guard.disabled_rules', []), 'is_string')),
                 detectReadHttpCalls: (bool) config('transaction-guard.detect_read_http_calls', false),
+                defaultDatabaseConnection: (string) config('database.default', '@default'),
             );
 
             $guard = new TransactionGuard($analysisConfig);
@@ -63,15 +64,14 @@ final class TransactionGuardCommand extends Command
 
         if ((bool) $this->option('generate-baseline')) {
             try {
-                $raw = $guard->analyze($paths, $exclude, null);
-                Baseline::write($baselinePath, $raw->findings);
+                Baseline::write($baselinePath, $result->findings);
             } catch (\JsonException|\RuntimeException $exception) {
                 $this->error('Unable to generate Transaction Guard baseline: '.$exception->getMessage());
 
                 return self::INVALID;
             }
 
-            $this->info(sprintf('Transaction Guard baseline written: %s (%d findings).', $baselinePath, count($raw->findings)));
+            $this->info(sprintf('Transaction Guard baseline written: %s (%d findings).', $baselinePath, count($result->findings)));
 
             return self::SUCCESS;
         }

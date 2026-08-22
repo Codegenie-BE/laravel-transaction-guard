@@ -173,7 +173,7 @@ PHP,
 <?php
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
-DB::transaction(function () { Bus::dispatch(new \App\Jobs\ProcessOrder())->afterCommit(); });
+DB::transaction(function () { Bus::dispatch((new \App\Jobs\ProcessOrder())->afterCommit()); });
 PHP,
         'rules' => [],
         'absent' => ['TG001'],
@@ -357,7 +357,7 @@ DB::transaction(function () { broadcast(new OrderUpdated()); });
 PHP,
         'rules' => ['TG005'],
     ],
-    'broadcast after commit contract is safe' => [
+    'ShouldDispatchAfterCommit alone does not defer direct broadcast helper' => [
         'code' => <<<'PHP'
 <?php
 namespace App\Events;
@@ -367,8 +367,7 @@ use Illuminate\Support\Facades\DB;
 class OrderUpdated implements ShouldBroadcast, ShouldDispatchAfterCommit {}
 DB::transaction(function () { broadcast(new OrderUpdated()); });
 PHP,
-        'rules' => [],
-        'absent' => ['TG005'],
+        'rules' => ['TG005'],
     ],
     'ShouldBroadcastNow stays unsafe despite queue after_commit' => [
         'code' => <<<'PHP'
@@ -1106,7 +1105,7 @@ PHP,
         'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
     ],
 
-    'Laravel 13 Queue route array connection is treated conservatively' => [
+    'Laravel 13 Queue route array connection follows runtime connection-first semantics' => [
         'code' => <<<'PHP'
 <?php
 namespace App\Jobs;
@@ -1117,7 +1116,8 @@ class ProcessOrder implements ShouldQueue {}
 Queue::route([ProcessOrder::class => ['redis', 'orders']]);
 DB::transaction(function () { ProcessOrder::dispatch(); });
 PHP,
-        'rules' => ['TG001'],
+        'rules' => [],
+        'absent' => ['TG001'],
         'config' => ['queue_default' => 'database', 'queue_after_commit' => ['redis' => true, 'database' => false]],
     ],
     'Laravel 13 Queue route array queue-only entry keeps default connection' => [
@@ -1173,6 +1173,582 @@ DB::transaction(function () {
 }, attempts: 3);
 PHP,
         'rules' => ['TG002', 'TG011'],
+    ],
+
+    'fully qualified DB and Http facades are detected' => [
+        'code' => <<<'PHP'
+<?php
+\Illuminate\Support\Facades\DB::transaction(function () {
+    \Illuminate\Support\Facades\Http::post('https://example.test/capture');
+});
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'queued closure inside transaction is flagged' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { dispatch(function () { metrics_flush(); }); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'queued closure chained afterCommit is safe' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { dispatch(function () { Http::post('https://example.test/capture'); })->afterCommit(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001', 'TG006'],
+    ],
+    'queued closure uses safe global queue after_commit' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { dispatch(fn () => metrics_flush()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'queued closure afterResponse is lifecycle risk' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { dispatch(fn () => metrics_flush())->afterResponse(); });
+PHP,
+        'rules' => ['TG017'],
+        'absent' => ['TG001'],
+    ],
+    'dispatch_sync closure is synchronous risk' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { dispatch_sync(fn () => metrics_flush()); });
+PHP,
+        'rules' => ['TG016'],
+    ],
+    'job withChain dispatch is flagged' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { ProcessOrder::withChain([new ProcessOrder()])->dispatch(); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'job withChain dispatch afterCommit is safe' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { ProcessOrder::withChain([new ProcessOrder()])->dispatch()->afterCommit(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'Queue pushRaw is unsafe even on after_commit connection' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+DB::transaction(function () { Queue::connection('redis')->pushRaw('{"id":"1"}'); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'Queue laterRaw is unsafe even on after_commit connection' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+DB::transaction(function () { Queue::connection('redis')->laterRaw(10, '{"id":"1"}'); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'event static dispatchIf is flagged' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Support\Facades\DB;
+class OrderUpdated {}
+DB::transaction(function () { OrderUpdated::dispatchIf(true); });
+PHP,
+        'rules' => ['TG002'],
+    ],
+    'event static dispatchUnless honors ShouldDispatchAfterCommit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
+use Illuminate\Support\Facades\DB;
+class OrderUpdated implements ShouldDispatchAfterCommit {}
+DB::transaction(function () { OrderUpdated::dispatchUnless(false); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG002'],
+    ],
+    'named event helper is conservatively reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { event('order.updated'); });
+PHP,
+        'rules' => ['TG002'],
+    ],
+    'event static broadcast is flagged' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Support\Facades\DB;
+class OrderUpdated implements ShouldBroadcast {}
+DB::transaction(function () { OrderUpdated::broadcast(); });
+PHP,
+        'rules' => ['TG005'],
+    ],
+    'direct broadcast explicit afterCommit property is safe' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Support\Facades\DB;
+class OrderUpdated implements ShouldBroadcast { public bool $afterCommit = true; }
+DB::transaction(function () { broadcast(new OrderUpdated()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG005'],
+    ],
+    'custom interface extending ShouldQueueAfterCommit is safe' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+interface AtomicJob extends ShouldQueueAfterCommit {}
+class ProcessOrder implements AtomicJob {}
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'transitive custom interface inheritance is safe' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+interface AtomicJob extends ShouldQueueAfterCommit {}
+interface CriticalAtomicJob extends AtomicJob {}
+class ProcessOrder implements CriticalAtomicJob {}
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'ShouldQueueAfterCommit can be explicitly overridden false by property' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueueAfterCommit { public bool $afterCommit = false; }
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'ShouldQueue job explicit afterCommit property is safe' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue { public bool $afterCommit = true; }
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'constructor last afterCommit call wins over earlier beforeCommit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue { public function __construct() { $this->beforeCommit(); $this->afterCommit(); } }
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'constructor last beforeCommit call overrides safe queue config' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue { public function __construct() { $this->afterCommit(); $this->beforeCommit(); } }
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'Laravel 13 Queue route on direct trait is respected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+trait RoutedToRedis {}
+class ProcessOrder implements ShouldQueue { use RoutedToRedis; }
+Queue::route(RoutedToRedis::class, connection: 'redis');
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false, 'redis' => true]],
+    ],
+    'Laravel 13 Queue route on recursively used trait is respected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+trait RoutedToRedis {}
+trait FastJob { use RoutedToRedis; }
+class ProcessOrder implements ShouldQueue { use FastJob; }
+Queue::route(RoutedToRedis::class, connection: 'redis');
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false, 'redis' => true]],
+    ],
+    'Laravel 13 Queue forward resolves Queue attribute connection' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\Attributes\Queue as QueueName;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+#[QueueName('emails')]
+class ProcessOrder implements ShouldQueue {}
+Queue::forward('emails', 'critical-emails', connection: 'redis');
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false, 'redis' => true]],
+    ],
+    'Laravel 13 Queue forward resolves constructor onQueue' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueue { public function __construct() { $this->onQueue('emails'); } }
+Queue::forward('emails', 'critical-emails', connection: 'redis');
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false, 'redis' => true]],
+    ],
+    'manual transactions are balanced per database connection' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection('mysql')->beginTransaction();
+DB::connection('pgsql')->commit();
+PHP,
+        'rules' => ['TG013'],
+    ],
+    'cross connection database write is reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection('mysql')->transaction(function () { DB::connection('pgsql')->table('audit')->insert(['ok' => 1]); });
+PHP,
+        'rules' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
+    'same connection database write stays atomic' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection('mysql')->transaction(function () { DB::connection('mysql')->table('audit')->insert(['ok' => 1]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
+    'named transaction detects write through different default connection' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection('mysql')->transaction(function () { DB::table('audit')->insert(['ok' => 1]); });
+PHP,
+        'rules' => ['TG021'],
+        'config' => ['database_default' => 'pgsql'],
+    ],
+    'dynamic database connection is not guessed as cross connection' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::connection($tenant)->transaction(function () { DB::connection('pgsql')->table('audit')->insert(['ok' => 1]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG021'],
+        'config' => ['database_default' => 'mysql'],
+    ],
+    'unrelated beforeCommit method is not treated as Laravel dispatch override' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () use ($service) { $service->beforeCommit(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG010'],
+    ],
+    'Http pool inside transaction is reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { Http::pool(fn ($pool) => [$pool->post('https://example.test')]); });
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'Http batch inside transaction is reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { Http::batch(fn ($batch) => $batch->post('https://example.test')); });
+PHP,
+        'rules' => ['TG006'],
+    ],
+    'Process pool inside transaction is reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Process;
+DB::transaction(function () { Process::pool(fn ($pool) => [$pool->command('sync-orders')]); });
+PHP,
+        'rules' => ['TG009'],
+    ],
+    'Cache putMany is reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Cache::putMany(['order:1' => 'paid']); });
+PHP,
+        'rules' => ['TG008'],
+    ],
+    'Cache remember is reported because it can mutate cache on miss' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Cache::remember('order:1', 60, fn () => 'paid'); });
+PHP,
+        'rules' => ['TG008'],
+    ],
+    'Storage writeStream is reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+DB::transaction(function () use ($stream) { Storage::writeStream('receipt.txt', $stream); });
+PHP,
+        'rules' => ['TG007'],
+    ],
+    'File replaceInFile is reported' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+DB::transaction(function () { File::replaceInFile('a', 'b', '/tmp/a'); });
+PHP,
+        'rules' => ['TG007'],
+    ],
+
+    'Bus chain creation without dispatch has no side effect' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::chain([new \App\Jobs\A(), new \App\Jobs\B()]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'Bus batch creation without dispatch has no side effect' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::batch([new \App\Jobs\A()]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'Bus invalid post-dispatch afterCommit chain is not accepted as safety proof' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::dispatch((new \App\Jobs\ProcessOrder())->afterCommit()); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'Queue push honors ShouldQueueAfterCommit job contract' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueueAfterCommit {}
+DB::transaction(function () { Queue::push(new ProcessOrder()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false]],
+    ],
+    'Queue push honors explicit job afterCommit preference' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { Queue::push((new ProcessOrder())->afterCommit()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false]],
+    ],
+    'Queue push explicit afterCommit false overrides safe queue config' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueue { public bool $afterCommit = false; }
+DB::transaction(function () { Queue::push(new ProcessOrder()); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'direct broadcast explicit afterCommit false overrides queue after_commit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Support\Facades\DB;
+class OrderUpdated implements ShouldBroadcast { public bool $afterCommit = false; }
+DB::transaction(function () { broadcast(new OrderUpdated()); });
+PHP,
+        'rules' => ['TG005'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+
+    'Bus chain creation without dispatch has no side effect' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::chain([new \App\Jobs\A(), new \App\Jobs\B()]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'Bus batch creation without dispatch has no side effect' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::batch([new \App\Jobs\A()]); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
+    'Bus invalid post-dispatch afterCommit chain is not accepted as safety proof' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Bus::dispatch(new \App\Jobs\ProcessOrder())->afterCommit(); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'Queue push honors ShouldQueueAfterCommit job contract' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueueAfterCommit {}
+DB::transaction(function () { Queue::push(new ProcessOrder()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false]],
+    ],
+    'Queue push honors explicit job afterCommit preference' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { Queue::push((new ProcessOrder())->afterCommit()); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false]],
+    ],
+    'Queue push explicit afterCommit false overrides safe queue config' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+class ProcessOrder implements ShouldQueue { public bool $afterCommit = false; }
+DB::transaction(function () { Queue::push(new ProcessOrder()); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
+    'direct broadcast explicit afterCommit false overrides queue after_commit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Support\Facades\DB;
+class OrderUpdated implements ShouldBroadcast { public bool $afterCommit = false; }
+DB::transaction(function () { broadcast(new OrderUpdated()); });
+PHP,
+        'rules' => ['TG005'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
     ],
 
 ];

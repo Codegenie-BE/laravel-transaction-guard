@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Connection-aware manual transaction analysis and `TG021` cross-database-connection write detection.
+- Queued closure, pending chain, raw queue, conditional event, static broadcast, HTTP pool/batch and Process pool coverage.
+- Laravel 13 recursive trait routing, queue forwarding, queue attributes and current route-array connection semantics.
+- Additional cache/filesystem mutation coverage and fully qualified facade support.
+- Informational `composer benchmark` workload for analyzer profiling.
+
+### Changed
+
+- Source scanning pre-indexes lines/non-code ranges, caches repeated lookups and avoids repeated sort/filter work on transaction regions.
+- Files without detected database transactions exit before side-effect rule scans, and baseline generation reuses the initial analysis result instead of scanning twice.
+- Disabled-rule checks use a precomputed lookup map instead of repeated linear scans on every finding.
+- Recursive file discovery prunes excluded directories before descending and matches exclude path segments precisely.
+- After-commit metadata honors interface inheritance and explicit `afterCommit` property/constructor overrides.
+- Direct broadcasts no longer treat `ShouldDispatchAfterCommit` alone as proof of safety because Laravel queues them through the broadcast manager directly.
+- PHPStan level 8 runs without the previous analyzer-specific ignore baseline.
+
+
 ## [v0.1.0] - 2026-08-21
 
 ### Added
