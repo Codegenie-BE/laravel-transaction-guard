@@ -51,9 +51,11 @@ replace('src/Analysis/SourceScanner.php',
 code = code[:start] + replacement + code[end:]
 exec(compile(code, str(path), 'exec'), {'__file__': str(path), '__name__': '__main__'})
 
+root = Path(__file__).resolve().parents[1]
+
 # re.sub replacement strings collapse one level of backslash escaping. Normalize
 # the generated PHP literal so a single backslash value is represented as '\\'.
-finding_path = Path(__file__).resolve().parents[1] / 'src/Analysis/Finding.php'
+finding_path = root / 'src/Analysis/Finding.php'
 finding = finding_path.read_text()
 finding = finding.replace(
     "str_replace('\\', '/', realpath($root)",
@@ -61,3 +63,19 @@ finding = finding.replace(
     1,
 )
 finding_path.write_text(finding)
+
+# PHP readonly classes cannot declare a non-promoted property with a default.
+# Assign the compiled pattern cache exactly once from the constructor instead.
+config_path = root / 'src/Analysis/AnalysisConfig.php'
+config = config_path.read_text()
+config = config.replace(
+    '    private array $compiledCustomSideEffectPatterns = [];',
+    '    private array $compiledCustomSideEffectPatterns;',
+    1,
+)
+config = config.replace(
+    '        $this->disabledRuleLookup = $normalizedDisabled;\n\n        foreach ($this->customSideEffectPatterns as $pattern) {',
+    '        $this->disabledRuleLookup = $normalizedDisabled;\n        $this->compiledCustomSideEffectPatterns = [];\n\n        foreach ($this->customSideEffectPatterns as $pattern) {',
+    1,
+)
+config_path.write_text(config)
