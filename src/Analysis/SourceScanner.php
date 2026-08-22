@@ -1093,7 +1093,7 @@ final class SourceScanner
             }
 
             $start = end($stacks[$key]);
-            if ($start === false || ! $this->manualTerminalCloses($start, $call)) {
+            if (! $this->manualTerminalCloses($start, $call)) {
                 continue;
             }
 
@@ -1109,7 +1109,6 @@ final class SourceScanner
             }
         }
     }
-
 
     /** @return list<TransactionRegion> */
     private function findClosureTransactions(): array
@@ -1168,6 +1167,7 @@ final class SourceScanner
                     return;
                 }
 
+                /** @var DatabaseControlCall $start */
                 $end = $endOffset ?? strlen($this->source);
                 $regions[] = [
                     'start' => $start['end'],
@@ -1213,7 +1213,6 @@ final class SourceScanner
         return $regions;
     }
 
-
     /** @return list<DatabaseControlCall> */
     private function manualControlCalls(): array
     {
@@ -1236,7 +1235,6 @@ final class SourceScanner
 
         return $calls;
     }
-
 
     /**
      * @param  DatabaseControlCall  $start
@@ -1348,6 +1346,7 @@ final class SourceScanner
 
         return null;
     }
+
     private function callableScopeAt(int $offset): string
     {
         $best = null;
