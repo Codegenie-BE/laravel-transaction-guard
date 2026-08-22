@@ -1266,6 +1266,25 @@ PHP,
         'rules' => ['TG002', 'TG011'],
     ],
 
+    'global dispatch helper with unresolved metadata is conservatively reported' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Actions;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { dispatch(new \Vendor\Package\RecalculateOrder()); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'global dispatch helper with unresolved metadata is safe after commit' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Actions;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { dispatch(new \Vendor\Package\RecalculateOrder())->afterCommit(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+    ],
     'fully qualified DB and Http facades are detected' => [
         'code' => <<<'PHP'
 <?php
