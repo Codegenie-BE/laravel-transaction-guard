@@ -138,7 +138,7 @@ They are reported as `TG100` while executed inside a detected transaction.
 | `TG009` | error | External process inside transaction |
 | `TG010` | error | Explicit `beforeCommit()` override |
 | `TG011` | warning / critical | Side effect can repeat during transaction deadlock retries |
-| `TG012` | critical | DDL / implicit commit risk |
+| `TG012` | critical / warning | DDL / implicit commit risk |
 | `TG013` | critical | Unclosed manual transaction |
 | `TG014` | info | Transaction callback could not be resolved statically |
 | `TG016` | warning | Synchronous job dispatch inside transaction |
@@ -146,10 +146,13 @@ They are reported as `TG100` while executed inside a detected transaction.
 | `TG018` | warning | Concurrent/deferred execution inside transaction |
 | `TG020` | warning / error | Redis mutation or publish inside transaction |
 | `TG021` | error | Database/Eloquent write on another connection |
+| `TG022` | warning | `PreparesForDispatch` hook runs before commit-aware queueing |
+| `TG023` | warning | Unique/debounce PendingDispatch cache state before commit |
 | `TG100` | warning | Configured custom side effect |
 | `TG900` | error | Unreadable source file |
 | `TG901` | error | PHP parse failure |
 | `TG902` | error | Analyzer regex/runtime failure |
+| `TG903` | error | Source-tree traversal failure |
 
 See [`docs/RULES.md`](docs/RULES.md) for rule details and remediation guidance. The deeper failure model and remediation decision table are in [`docs/ANALYSIS.md`](docs/ANALYSIS.md); regression coverage is documented in [`docs/SCENARIO-MATRIX.md`](docs/SCENARIO-MATRIX.md).
 
@@ -169,6 +172,7 @@ The analyzer is intentionally conservative and Laravel-focused. It does not exec
 - side effects hidden in arbitrary event listeners or Eloquent observers require explicit post-commit contracts or project-specific patterns;
 - local closure variables and simple local Laravel handles are resolved, but the package intentionally does not build a general PHP call graph;
 - highly branch-dependent manual transaction flows may require review;
+- `PreparesForDispatch`, unique jobs and Laravel 13 debounce can perform pre-dispatch work before queue after-commit deferral; Transaction Guard reports these separately;
 - third-party SDK calls are not guessed automatically;
 - nested closures that are merely defined inside a transaction are ignored unless immediately invoked.
 

@@ -117,7 +117,7 @@
         "test": "Run the Pest suite.",
         "test:coverage": "Run Pest with the enforced 80% coverage baseline.",
         "test:smoke": "Run the dependency-free transaction-safety regression matrix.",
-        "benchmark": "Profile representative transaction-free, safe and side-effect-heavy analyzer workloads.",
+        "benchmark": "Profile representative transaction-free, safe, side-effect-heavy and mixed analyzer workloads; pass --json for trend capture.",
         "check:docs": "Verify the canonical rule catalog is represented in public documentation."
     }
 }

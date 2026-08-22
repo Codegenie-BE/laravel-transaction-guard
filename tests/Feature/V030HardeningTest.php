@@ -48,6 +48,25 @@ it('explains a canonical rule', function (): void {
         ->assertSuccessful();
 });
 
+it('can fail CI on unresolved transaction callbacks', function (): void {
+    $dir = sys_get_temp_dir().'/tg-unresolved-'.bin2hex(random_bytes(4));
+    mkdir($dir, 0777, true);
+    $file = $dir.'/Service.php';
+    file_put_contents($file, "<?php use Illuminate\Support\Facades\DB; DB::transaction([new stdClass, 'run']);");
+    try {
+        config()->set('transaction-guard.fail_on_unresolved_transaction', true);
+        $this->artisan('transaction:guard', ['paths' => [$file], '--fail-on' => 'never'])->assertExitCode(1);
+    } finally {
+        @unlink($file);
+        @rmdir($dir);
+    }
+});
+
+it('accepts alternate PCRE delimiters for custom patterns', function (): void {
+    expect(fn () => new AnalysisConfig(customSideEffectPatterns: ['~SmsGateway::send\s*\(~i']))
+        ->not->toThrow(InvalidArgumentException::class);
+});
+
 it('resolves an eloquent parent through the composer loader', function (): void {
     $dir = sys_get_temp_dir().'/tg-vendor-parent-'.bin2hex(random_bytes(4));
     mkdir($dir, 0777, true);

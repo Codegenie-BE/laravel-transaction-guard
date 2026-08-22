@@ -90,8 +90,19 @@ final class Baseline
         ];
 
         $encoded = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR).PHP_EOL;
-        if (file_put_contents($path, $encoded) === false) {
-            throw new \RuntimeException("Unable to write baseline [{$path}].");
+        $temporary = tempnam($directory, '.transaction-guard-baseline-');
+        if ($temporary === false) {
+            throw new \RuntimeException("Unable to create a temporary baseline file in [{$directory}].");
+        }
+
+        try {
+            if (file_put_contents($temporary, $encoded, LOCK_EX) === false || ! rename($temporary, $path)) {
+                throw new \RuntimeException("Unable to atomically write baseline [{$path}].");
+            }
+        } finally {
+            if (is_file($temporary)) {
+                @unlink($temporary);
+            }
         }
     }
 

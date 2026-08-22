@@ -2371,4 +2371,8 @@ PHP,
 
 ];
 
-return array_merge($scenarios, require __DIR__.'/Scenarios/V030Hardening.php');
+return array_merge(
+    $scenarios,
+    require __DIR__.'/Scenarios/V030Hardening.php',
+    require __DIR__.'/Scenarios/V040Hardening.php',
+);

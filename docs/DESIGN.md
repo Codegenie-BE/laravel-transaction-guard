@@ -21,7 +21,7 @@ Why this design:
 - Laravel idioms such as facade aliases and interfaces can be indexed without executing code;
 - install footprint stays small.
 
-The analyzer builds a lightweight class metadata index for imports, inheritance, implemented interfaces, constructor `afterCommit()` / `beforeCommit()` intent, literal job queue connections, and Laravel 13 queue routing. `FileContextMap` keeps namespace/import resolution offset-aware for multi-namespace and bracketed-namespace files, while `SourceIndex` owns source-location/non-code lookups. The scanner then maps transaction regions and examines only effects that lexically execute inside those regions.
+The analyzer builds a lightweight class metadata index for imports, inheritance, implemented interfaces, constructor `afterCommit()` / `beforeCommit()` intent, literal job queue connections, Laravel 13 queue routing, pre-dispatch attributes and simple model-relation targets. `FileContextMap` keeps namespace/import resolution offset-aware for multi-namespace and bracketed-namespace files, while `SourceIndex` owns source-location/non-code lookups. The scanner then maps transaction regions and examines only effects that lexically execute inside those regions.
 
 ## False-positive controls
 
@@ -52,3 +52,8 @@ The analyzer intentionally stops short of a full PHP call-graph engine. It suppo
 ## Static-analysis boundary
 
 Transaction Guard deliberately does not pretend to resolve arbitrary macros, reflection, container bindings, dynamic database/queue connection expressions, or user-defined higher-order callbacks. It reports high-confidence framework semantics and leaves dynamic behavior to custom patterns or human review. This is preferable to converting uncertain regex guesses into release-blocking findings.
+
+
+## Focused internal components
+
+The tokenizer architecture remains intentionally dependency-light. `OperationCatalog` centralizes Laravel mutation APIs, `DatabaseDriverPolicy` owns driver-specific DDL classification, `StaticExpressionResolver` reduces bounded literal expressions, `MetadataAttributeResolver` resolves class attributes, and `ModelRelationExtractor` indexes simple Eloquent relation targets. These extractions keep framework-semantic tables out of the scanner hot path without introducing a general PHP AST/call-graph engine.

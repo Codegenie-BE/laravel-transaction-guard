@@ -27,10 +27,43 @@ final class RuleCatalog
         'TG018' => ['title' => 'Concurrency/deferred work', 'description' => 'Concurrent or deferred work is outside the current transaction boundary.'],
         'TG020' => ['title' => 'Redis mutation inside transaction', 'description' => 'Redis state is mutated while the SQL database transaction is open.'],
         'TG021' => ['title' => 'Cross-connection database write', 'description' => 'A database write uses a different connection from the active transaction.'],
+        'TG022' => ['title' => 'Pre-dispatch hook before commit', 'description' => 'A PreparesForDispatch hook executes synchronously before commit-aware queue dispatch can defer the job.'],
+        'TG023' => ['title' => 'Queue cache lock before commit', 'description' => 'PendingDispatch may acquire unique/debounce cache state before the surrounding database transaction commits.'],
         'TG100' => ['title' => 'Configured custom side effect', 'description' => 'A configured project-specific side effect runs inside a transaction.'],
         'TG900' => ['title' => 'Unreadable source file', 'description' => 'The analyzer could not read a requested PHP source file.'],
         'TG901' => ['title' => 'PHP parse failure', 'description' => 'The analyzer could not parse a requested PHP source file.'],
         'TG902' => ['title' => 'Analyzer regular-expression failure', 'description' => 'A scanner regular expression failed at analysis time and results may be incomplete.'],
+        'TG903' => ['title' => 'Source traversal failure', 'description' => 'The analyzer could not traverse part of a requested source tree.'],
+    ];
+
+    /** @var array<string, array{severity:string,category:string,remediation:string}> */
+    private const DEFAULTS = [
+        'TG001' => ['severity' => 'error / warning', 'category' => 'queue', 'remediation' => 'Use after-commit dispatch or move the dispatch after the transaction.'],
+        'TG002' => ['severity' => 'warning', 'category' => 'events', 'remediation' => 'Dispatch after commit or implement ShouldDispatchAfterCommit.'],
+        'TG003' => ['severity' => 'error', 'category' => 'mail', 'remediation' => 'Send or queue mail after commit.'],
+        'TG004' => ['severity' => 'error', 'category' => 'notifications', 'remediation' => 'Deliver notifications after commit.'],
+        'TG005' => ['severity' => 'error', 'category' => 'broadcasting', 'remediation' => 'Broadcast after commit.'],
+        'TG006' => ['severity' => 'error / warning', 'category' => 'external-io', 'remediation' => 'Perform outbound HTTP after commit.'],
+        'TG007' => ['severity' => 'warning', 'category' => 'filesystem', 'remediation' => 'Move filesystem mutations after commit or compensate them.'],
+        'TG008' => ['severity' => 'warning', 'category' => 'cache', 'remediation' => 'Mutate cache and cache locks after commit.'],
+        'TG009' => ['severity' => 'error', 'category' => 'process', 'remediation' => 'Run external processes after commit.'],
+        'TG010' => ['severity' => 'error', 'category' => 'queue', 'remediation' => 'Remove beforeCommit() unless pre-commit dispatch is intentional.'],
+        'TG011' => ['severity' => 'warning / critical', 'category' => 'retries', 'remediation' => 'Keep retryable transaction callbacks free of irreversible effects.'],
+        'TG012' => ['severity' => 'critical / warning', 'category' => 'database', 'remediation' => 'Keep DDL and implicit-commit statements outside application transactions.'],
+        'TG013' => ['severity' => 'critical', 'category' => 'database', 'remediation' => 'Close manual transactions on every path or use DB::transaction().'],
+        'TG014' => ['severity' => 'info', 'category' => 'analysis', 'remediation' => 'Use an analyzable transaction callback or enable strict unresolved-callback CI.'],
+        'TG016' => ['severity' => 'warning', 'category' => 'queue', 'remediation' => 'Move synchronous dispatch outside the transaction.'],
+        'TG017' => ['severity' => 'warning', 'category' => 'queue', 'remediation' => 'Use afterCommit() instead of after-response timing.'],
+        'TG018' => ['severity' => 'warning', 'category' => 'concurrency', 'remediation' => 'Start concurrent/deferred work after commit.'],
+        'TG020' => ['severity' => 'warning / error', 'category' => 'redis', 'remediation' => 'Move Redis mutations after commit.'],
+        'TG021' => ['severity' => 'error', 'category' => 'database', 'remediation' => 'Use the transaction connection for all atomic writes.'],
+        'TG022' => ['severity' => 'warning', 'category' => 'queue', 'remediation' => 'Keep prepareForDispatch() side-effect free or dispatch after commit.'],
+        'TG023' => ['severity' => 'warning', 'category' => 'queue', 'remediation' => 'Create unique/debounce PendingDispatch jobs after commit when pre-commit cache state is unacceptable.'],
+        'TG100' => ['severity' => 'warning', 'category' => 'custom', 'remediation' => 'Move the configured side effect after commit.'],
+        'TG900' => ['severity' => 'error', 'category' => 'diagnostic', 'remediation' => 'Fix file readability.'],
+        'TG901' => ['severity' => 'error', 'category' => 'diagnostic', 'remediation' => 'Fix PHP syntax before analysis.'],
+        'TG902' => ['severity' => 'error', 'category' => 'diagnostic', 'remediation' => 'Report the analyzer regex failure.'],
+        'TG903' => ['severity' => 'error', 'category' => 'diagnostic', 'remediation' => 'Fix source-tree traversal permissions or exclusions.'],
     ];
 
     /** @return list<string> */
@@ -46,10 +79,10 @@ final class RuleCatalog
 
     public static function isDiagnostic(string $rule): bool
     {
-        return in_array(strtoupper($rule), ['TG900', 'TG901', 'TG902'], true);
+        return in_array(strtoupper($rule), ['TG900', 'TG901', 'TG902', 'TG903'], true);
     }
 
-    /** @return array{title:string,description:string} */
+    /** @return array{title:string,description:string,severity:string,category:string,remediation:string} */
     public static function definition(string $rule): array
     {
         $rule = strtoupper($rule);
@@ -57,7 +90,7 @@ final class RuleCatalog
             throw new \InvalidArgumentException("Unknown Transaction Guard rule [{$rule}].");
         }
 
-        return self::RULES[$rule];
+        return [...self::RULES[$rule], ...self::DEFAULTS[$rule]];
     }
 
     public static function helpUri(string $rule): string

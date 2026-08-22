@@ -116,3 +116,16 @@ Move the mutation to `DB::afterCommit()`, perform it after `DB::transaction(...)
 Laravel database transactions are connection-scoped. Transaction Guard reports statically known writes that use a different database connection from the surrounding `DB::transaction()` / manual transaction. A rollback on one connection cannot roll back the other connection.
 
 Dynamic connection expressions are intentionally not guessed. When a multi-database workflow is intentional, coordinate it explicitly (for example with an outbox/saga/compensation strategy) rather than assuming cross-connection atomicity.
+
+
+## TG022 — Pre-dispatch hook before commit
+
+Laravel 13 `PendingDispatch` executes `PreparesForDispatch::prepareForDispatch()` synchronously before the job reaches the queue's after-commit deferral. Keep the hook side-effect free or create/dispatch the job after commit.
+
+## TG023 — Queue cache lock before commit
+
+`PendingDispatch` may acquire `ShouldBeUnique` or debounce cache state before the queue layer defers enqueueing until commit. Laravel can register rollback compensation, but external cache state still exists while the SQL transaction is open.
+
+## TG903 — Source traversal failure
+
+A requested source directory could not be traversed completely. Analyzer-integrity diagnostics cannot be disabled or baselined; fix permissions/exclusions before trusting the scan.

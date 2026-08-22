@@ -120,10 +120,12 @@ final class SourceScanner
         $this->scanNotifications($findings);
         $this->scanBroadcasts($findings);
         $this->scanVariablePayloadEffects($findings);
+        $this->scanVariableFrameworkPayloads($findings);
         $this->scanVariableFacadeHandles($findings);
         $this->scanHttp($findings);
         $this->scanFilesystem($findings);
         $this->scanCache($findings);
+        $this->scanRateLimiter($findings);
         $this->scanRedis($findings);
         $this->scanProcesses($findings);
         $this->scanConcurrency($findings);
@@ -138,7 +140,7 @@ final class SourceScanner
             if (! $this->config->ruleEnabled($finding->rule)) {
                 continue;
             }
-            $key = $finding->rule.'|'.$finding->line.'|'.$finding->snippet;
+            $key = $finding->rule.'|'.$finding->line.'|'.($finding->column ?? 0).'|'.$finding->snippet;
             $unique[$key] ??= $finding;
         }
 
@@ -183,6 +185,9 @@ final class SourceScanner
                 $metadata = $this->classIndex->metadata($resolved);
                 $method = $this->captured($match, 'method');
                 $statement = $this->statementAt($offset);
+                if ($this->conditionalDispatchIsSkipped($statement, $method)) {
+                    continue;
+                }
                 $globalDispatchHelper = $method === '';
                 $standardDispatch = $globalDispatchHelper || in_array($method, ['dispatch', 'dispatchIf', 'dispatchUnless'], true);
                 $jobNamespace = str_contains(strtolower($resolved), '\\jobs\\') || preg_match('/\\\\Jobs\\\\/', $resolved) === 1;
@@ -203,6 +208,10 @@ final class SourceScanner
 
                 if (! $looksLikeJob && ! in_array($method, ['dispatchSync', 'dispatch_sync', 'dispatchAfterResponse'], true)) {
                     continue;
+                }
+
+                if ($globalDispatchHelper || in_array($method, ['dispatch', 'dispatchIf', 'dispatchUnless', 'dispatchAfterResponse'], true)) {
+                    $this->appendPendingDispatchLifecycleFindings($findings, $offset, $tx, $metadata);
                 }
 
                 if (in_array($method, ['dispatchSync', 'dispatch_sync'], true)) {
@@ -310,6 +319,10 @@ final class SourceScanner
 
             $statement = $this->statementAt($offset);
             if (preg_match('/->\s*dispatch(?:If|Unless)?\s*\(/i', $statement) !== 1) {
+                continue;
+            }
+            if ($this->conditionalDispatchIsSkipped($statement, 'dispatchIf')
+                || $this->conditionalDispatchIsSkipped($statement, 'dispatchUnless')) {
                 continue;
             }
 
@@ -631,7 +644,12 @@ final class SourceScanner
             }
             $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
             $metadata = $this->classIndex->metadata($class);
-            $looksLikeEvent = $metadata?->eventAfterCommit() === true || str_contains(strtolower($class), '\\events\\');
+            $method = $this->captured($match, 'method');
+            if ($this->conditionalDispatchIsSkipped($this->statementAt($offset), $method)) {
+                continue;
+            }
+            $looksLikeEvent = $this->classIndex->isDispatchableEvent($class)
+                || str_contains(strtolower($class), '\\events\\');
             if (! $looksLikeEvent || $metadata?->eventAfterCommit() === true) {
                 continue;
             }
@@ -774,10 +792,11 @@ final class SourceScanner
             $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
             $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
             $statement = $this->statementAt($offset);
+            $this->appendPendingDispatchLifecycleFindings($findings, $offset, $tx, $metadata);
 
             if ($metadata !== null && ! $metadata->queued()) {
                 $this->appendFinding($findings, $offset, 'TG016', Severity::Warning,
-                    "Dispatch of non-queueable [{$this->basename($class)}] executes synchronously while the database transaction is open.",
+                    "Dispatch of non-queueable [{$this->basename($metadata->name)}] executes synchronously while the database transaction is open.",
                     'Move synchronous work outside the transaction when it can observe committed state or produce irreversible effects.', 'high');
                 $this->appendRetryFinding($findings, $offset, $tx, 'synchronous job dispatch');
 
@@ -868,6 +887,82 @@ final class SourceScanner
         }
     }
 
+    /** @param list<Finding> $findings */
+    private function scanVariableFrameworkPayloads(array &$findings): void
+    {
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\Bus', 'Bus') as $alias) {
+            foreach ($this->matches('/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*dispatch\s*\(\s*(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/i') as $match) {
+                $this->reportVariableJobPayload($findings, $match['offset'], $this->captured($match, 'var'), false);
+            }
+        }
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\Queue', 'Queue') as $alias) {
+            foreach ($this->matches('/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?:push|later|pushOn|laterOn)\s*\([^;]*?(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/i') as $match) {
+                $this->reportVariableJobPayload($findings, $match['offset'], $this->captured($match, 'var'), false);
+            }
+        }
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\Event', 'Event') as $alias) {
+            foreach ($this->matches('/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*dispatch\s*\(\s*(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/i') as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+                $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
+                $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
+                if ($metadata?->eventAfterCommit() === true) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG002', Severity::Warning,
+                    $class === null ? 'A variable Event::dispatch payload is not provably commit-safe.' : "Event [{$this->basename($class)}] is dispatched before commit.",
+                    'Implement ShouldDispatchAfterCommit or dispatch after commit.', $metadata === null ? 'medium' : 'high');
+            }
+        }
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\Notification', 'Notification') as $alias) {
+            foreach ($this->matches('/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*send\s*\([^;]*?,\s*(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/is') as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+                $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
+                $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
+                if ($metadata?->queued() === true && $this->notificationDispatchIsAfterCommitSafe($this->statementAt($offset), $metadata)) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG004', Severity::Error,
+                    $class === null ? 'A variable Notification::send payload is not provably commit-safe.' : "Notification [{$this->basename($class)}] may be delivered before commit.",
+                    'Make queued delivery commit-aware or send after commit.', $metadata === null ? 'medium' : 'high');
+            }
+        }
+    }
+
+    /** @param list<Finding> $findings */
+    private function reportVariableJobPayload(array &$findings, int $offset, string $variable, bool $pendingDispatch): void
+    {
+        $tx = $this->eligibleTransaction($offset);
+        if ($tx === null) {
+            return;
+        }
+        $class = $this->localNewClassForVariable($offset, $variable);
+        $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
+        if ($pendingDispatch) {
+            $this->appendPendingDispatchLifecycleFindings($findings, $offset, $tx, $metadata);
+        }
+        if ($metadata !== null && ! $metadata->queued()) {
+            $this->appendFinding($findings, $offset, 'TG016', Severity::Warning,
+                "Dispatch of non-queueable [{$this->basename($metadata->name)}] executes synchronously inside the transaction.",
+                'Move synchronous work outside the transaction.', 'high');
+
+            return;
+        }
+        if ($this->jobDispatchIsAfterCommitSafe($this->statementAt($offset), $metadata)) {
+            return;
+        }
+        $this->appendFinding($findings, $offset, 'TG001', $metadata === null ? Severity::Warning : Severity::Error,
+            $class === null ? 'A variable job payload cannot be proven commit-safe.' : "Job [{$this->basename($class)}] may dispatch before commit.",
+            'Make the payload type statically visible and commit-aware, or dispatch after commit.', $metadata === null ? 'medium' : 'high');
+    }
+
     private function localNewClassForVariable(int $offset, string $variable): ?string
     {
         $scopeStart = 0;
@@ -909,7 +1004,7 @@ final class SourceScanner
             }
 
             $name = $this->nextSignificantToken($value + 1);
-            if ($name === null || ! in_array($this->tokens[$name]['id'], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+            if ($name === null || ! in_array($this->tokens[$name]['id'], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE], true)) {
                 $resolved = null;
 
                 continue;
@@ -980,11 +1075,7 @@ final class SourceScanner
                 continue;
             }
 
-            if ($handle['kind'] === 'cache' && in_array($method, [
-                'put', 'set', 'putmany', 'setmultiple', 'add', 'forever', 'remember', 'rememberwithwarmth', 'rememberforever',
-                'sear', 'flexible', 'touch', 'forget', 'delete', 'deletemultiple', 'clear', 'flush', 'flushlocks',
-                'increment', 'decrement', 'pull',
-            ], true)) {
+            if ($handle['kind'] === 'cache' && in_array($method, array_map('strtolower', OperationCatalog::CACHE_MUTATIONS), true)) {
                 $this->appendFinding($findings, $offset, 'TG008', Severity::Warning,
                     'Cache state is mutated through a locally assigned cache repository before the database transaction commits.',
                     'Mutate or invalidate cache after commit.', 'high');
@@ -993,16 +1084,34 @@ final class SourceScanner
                 continue;
             }
 
-            if ($handle['kind'] === 'redis' && in_array($method, [
-                'set', 'setex', 'psetex', 'mset', 'del', 'unlink', 'incr', 'incrby', 'incrbyfloat', 'decr', 'decrby',
-                'hset', 'hmset', 'hdel', 'hincrby', 'lpush', 'rpush', 'lpop', 'rpop', 'ltrim', 'sadd', 'srem', 'smove',
-                'zadd', 'zincrby', 'zrem', 'expire', 'pexpire', 'persist', 'flushdb', 'flushall', 'publish', 'xadd', 'xdel',
-                'xtrim', 'pipeline', 'transaction',
-            ], true)) {
+            if ($handle['kind'] === 'cache_lock' && in_array($method, array_map('strtolower', OperationCatalog::CACHE_LOCK_TERMINALS), true)) {
+                $this->appendFinding($findings, $offset, 'TG008', Severity::Warning,
+                    'A Laravel cache lock is acquired or released while a database transaction is open.',
+                    'Acquire/release cache locks after commit unless the lock lifecycle is explicitly compensatable.', 'high');
+                $this->appendRetryFinding($findings, $offset, $tx, 'cache lock mutation');
+
+                continue;
+            }
+
+            if ($handle['kind'] === 'redis' && in_array($method, array_map('strtolower', OperationCatalog::REDIS_MUTATIONS), true)) {
                 $this->appendFinding($findings, $offset, 'TG020', $method === 'publish' ? Severity::Error : Severity::Warning,
                     'Redis state is mutated through a locally assigned Redis connection while a database transaction is open.',
                     'Move the Redis mutation after commit or use an idempotent/outbox strategy.', 'high');
                 $this->appendRetryFinding($findings, $offset, $tx, 'Redis mutation');
+
+                continue;
+            }
+
+            if ($handle['kind'] === 'redis' && in_array($method, ['pipeline', 'transaction'], true)) {
+                [$mutates, $unknown] = $this->redisCallbackMutationState($this->statementAt($offset));
+                if ($mutates || $unknown) {
+                    $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                        $mutates
+                            ? 'A Redis pipeline/transaction callback mutates Redis while a database transaction is open.'
+                            : 'A Redis pipeline/transaction callback cannot be proven read-only while a database transaction is open.',
+                        'Keep Redis callback mutations after the database commit.', $mutates ? 'high' : 'medium');
+                    $this->appendRetryFinding($findings, $offset, $tx, 'Redis callback mutation');
+                }
 
                 continue;
             }
@@ -1024,7 +1133,7 @@ final class SourceScanner
             }
         }
 
-        $builderMutations = 'insert|insertGetId|insertOrIgnore|insertUsing|update|updateOrInsert|upsert|delete|truncate|increment|decrement|statement|unprepared|affectingStatement';
+        $builderMutations = OperationCatalog::alternation(OperationCatalog::QUERY_MUTATIONS);
         foreach ($this->matches('/(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)\s*->\s*(?:table|query)\s*\((?:(?!;).)*?\)(?:(?!;).)*?\b(?P<method>'.$builderMutations.')\s*\(/is') as $match) {
             $offset = $match['offset'];
             if ($this->eligibleTransaction($offset) === null) {
@@ -1088,6 +1197,9 @@ final class SourceScanner
                     }
 
                     $connection = null;
+                    if ($kind === 'cache' && preg_match('/::\s*(?:lock|restoreLock)\s*\(/i', $code) === 1) {
+                        $kind = 'cache_lock';
+                    }
                     if ($kind === 'db') {
                         $connection = $this->config->defaultDatabaseConnection;
                         if (preg_match('/::\s*connection\s*\(/i', $code, $call, PREG_OFFSET_CAPTURE) === 1) {
@@ -1214,8 +1326,9 @@ final class SourceScanner
             return;
         }
 
-        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Cache', 'Cache') as $alias) {
-            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::(?:(?!;).)*?\b(?P<method>put|set|putMany|setMultiple|add|forever|remember|rememberWithWarmth|rememberForever|sear|flexible|touch|forget|delete|deleteMultiple|clear|flush|flushLocks|increment|decrement|pull)\s*\(/is';
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\Cache', 'Cache') as $alias) {
+            $methods = OperationCatalog::alternation(OperationCatalog::CACHE_MUTATIONS);
+            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::(?:(?!;).)*?\b(?P<method>'.$methods.')\s*\(/is';
             foreach ($this->matches($pattern) as $match) {
                 $offset = $match['offset'];
                 $tx = $this->eligibleTransaction($offset);
@@ -1227,6 +1340,43 @@ final class SourceScanner
                     'Invalidate or mutate cache after commit so rollback cannot leave cache and database state inconsistent.', 'high');
                 $this->appendRetryFinding($findings, $offset, $tx, 'cache mutation');
             }
+
+            $lockTerminals = OperationCatalog::alternation(OperationCatalog::CACHE_LOCK_TERMINALS);
+            $lockPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?:lock|restoreLock)\s*\((?:(?!;).)*?\)\s*->\s*(?P<method>'.$lockTerminals.')\s*\(/is';
+            foreach ($this->matches($lockPattern) as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG008', Severity::Warning,
+                    'A cache lock is acquired/released while a database transaction is open.',
+                    'Acquire or release distributed cache locks after commit unless their lifecycle is explicitly compensatable.', 'high');
+                $this->appendRetryFinding($findings, $offset, $tx, 'cache lock mutation');
+            }
+        }
+    }
+
+    /** @param list<Finding> $findings */
+    private function scanRateLimiter(array &$findings): void
+    {
+        if (! $this->sourceContainsAny(['ratelimiter', 'rate limiter'])) {
+            return;
+        }
+
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\RateLimiter', 'RateLimiter') as $alias) {
+            $methods = OperationCatalog::alternation(OperationCatalog::RATE_LIMITER_MUTATIONS);
+            foreach ($this->matches('/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>'.$methods.')\s*\(/i') as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG008', Severity::Warning,
+                    'RateLimiter mutates cache-backed rate-limit state while a database transaction is open.',
+                    'Update rate-limit state after commit when it is coupled to transactional business state.', 'high');
+                $this->appendRetryFinding($findings, $offset, $tx, 'rate limiter mutation');
+            }
         }
     }
 
@@ -1236,7 +1386,7 @@ final class SourceScanner
         if (! $this->sourceContainsAny(['redis'])) {
             return;
         }
-        $mutating = 'set|setex|psetex|mset|del|unlink|incr|incrby|incrbyfloat|decr|decrby|hset|hmset|hdel|hincrby|lpush|rpush|lpop|rpop|ltrim|sadd|srem|smove|zadd|zincrby|zrem|expire|pexpire|persist|flushdb|flushall|publish|xadd|xdel|xtrim|pipeline|transaction';
+        $mutating = OperationCatalog::alternation(OperationCatalog::REDIS_MUTATIONS);
 
         foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Redis', 'Redis') as $alias) {
             $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::(?:(?!;).)*?\b(?P<method>'.$mutating.')\s*\(/is';
@@ -1255,7 +1405,7 @@ final class SourceScanner
                 $this->appendRetryFinding($findings, $offset, $tx, "Redis {$method}");
             }
 
-            $commandPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*command\s*\(\s*[\'\"](?P<command>SET|SETEX|PSETEX|MSET|DEL|UNLINK|INCR|INCRBY|DECR|DECRBY|HSET|HMSET|HDEL|LPUSH|RPUSH|SADD|SREM|ZADD|ZREM|EXPIRE|PEXPIRE|PERSIST|FLUSHDB|FLUSHALL|PUBLISH|XADD|XDEL)[\'\"]/i';
+            $commandPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*command\s*\(\s*[\'\"](?P<command>[A-Za-z0-9_]+)[\'\"]/i';
             foreach ($this->matches($commandPattern, ['command']) as $match) {
                 $offset = $match['offset'];
                 $tx = $this->eligibleTransaction($offset);
@@ -1264,13 +1414,52 @@ final class SourceScanner
                 }
 
                 $command = strtoupper($this->captured($match, 'command'));
+                $kind = OperationCatalog::redisCommandKind($command);
+                if ($kind === 'read') {
+                    continue;
+                }
                 $severity = $command === 'PUBLISH' ? Severity::Error : Severity::Warning;
                 $this->appendFinding($findings, $offset, 'TG020', $severity,
-                    "Redis command {$command} mutates non-transactional state while a database transaction is open.",
-                    'Move the Redis mutation after commit, or use an idempotent/outbox strategy when both systems must remain consistent.', 'high');
+                    $kind === 'mutation'
+                        ? "Redis command {$command} mutates non-transactional state while a database transaction is open."
+                        : "Redis command {$command} cannot be proven read-only while a database transaction is open.",
+                    'Move Redis mutations after commit; review unknown/script commands explicitly.',
+                    $kind === 'mutation' ? 'high' : 'medium');
                 $this->appendRetryFinding($findings, $offset, $tx, "Redis {$command}");
             }
+
+            foreach ($this->matches('/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>pipeline|transaction)\s*\(/i') as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+                [$mutates, $unknown] = $this->redisCallbackMutationState($this->statementAt($offset));
+                if (! $mutates && ! $unknown) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                    $mutates
+                        ? 'A Redis pipeline/transaction callback mutates Redis while a database transaction is open.'
+                        : 'A Redis pipeline/transaction callback cannot be proven read-only while a database transaction is open.',
+                    'Keep Redis callback mutations after the database commit.', $mutates ? 'high' : 'medium');
+                $this->appendRetryFinding($findings, $offset, $tx, 'Redis callback mutation');
+            }
         }
+    }
+
+    /** @return array{bool,bool} mutates, unknown */
+    private function redisCallbackMutationState(string $statement): array
+    {
+        $code = $this->codeOnlyFragment($statement);
+        $mutations = OperationCatalog::alternation(OperationCatalog::REDIS_MUTATIONS);
+        if (preg_match('/->\s*(?:'.$mutations.')\s*\(/i', $code) === 1) {
+            return [true, false];
+        }
+
+        $hasInlineCallable = preg_match('/(?:pipeline|transaction)\s*\(\s*(?:static\s+)?(?:function|fn)\b/i', $code) === 1;
+
+        return [false, ! $hasInlineCallable];
     }
 
     /** @param  list<Finding>  $findings */
@@ -1355,10 +1544,17 @@ final class SourceScanner
             return;
         }
 
-        $mutations = 'insert|insertGetId|insertOrIgnore|insertUsing|update|updateOrInsert|upsert|delete|truncate|increment|decrement|statement|unprepared|affectingStatement';
+        $mutations = OperationCatalog::alternation(OperationCatalog::QUERY_MUTATIONS);
 
         foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\DB', 'DB') as $alias) {
-            $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*(?P<quote>[\'\"])(?P<connection>[^\'\"]+)\k<quote>\s*\)\s*->(?:(?![;{}]).)*?\b(?P<method>'.$mutations.')\s*\(/is';
+            $counterPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*(?P<quote>[\'\"])(?P<connection>[^\'\"]+)\k<quote>\s*\)\s*->(?:(?![;{}]|'.preg_quote($alias, '/').'\s*::\s*connection).)*?\b(?:incrementEach|decrementEach)\s*\(/is';
+            foreach ($this->matches($counterPattern) as $match) {
+                $this->reportCrossConnectionWrite($findings, $match['offset'], $this->captured($match, 'connection'));
+            }
+        }
+
+        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\DB', 'DB') as $alias) {
+            $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\(\s*(?P<quote>[\'\"])(?P<connection>[^\'\"]+)\k<quote>\s*\)\s*->(?:(?![;{}]|'.preg_quote($alias, '/').'\s*::\s*connection).)*?\b(?P<method>'.$mutations.')\s*\(/is';
             foreach ($this->matches($connectionPattern) as $match) {
                 $this->reportCrossConnectionWrite($findings, $match['offset'], $this->captured($match, 'connection'));
             }
@@ -1392,7 +1588,7 @@ final class SourceScanner
     /** @param list<Finding> $findings */
     private function scanEloquentCrossConnectionWrites(array &$findings): void
     {
-        $methods = 'create|forceCreate|updateOrCreate|firstOrCreate|upsert|insert|insertOrIgnore|update|delete|destroy|truncate|increment|decrement|forceDelete|restore';
+        $methods = OperationCatalog::alternation(OperationCatalog::ELOQUENT_STATIC_MUTATIONS);
         foreach ($this->matches('/(?<![A-Za-z0-9_\\\\])(?P<class>\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::(?:(?![;{}]).)*?\b(?P<method>'.$methods.')\s*\(/is') as $match) {
             $offset = $match['offset'];
             if ($this->eligibleTransaction($offset) === null) {
@@ -1406,7 +1602,8 @@ final class SourceScanner
             $this->reportCrossConnectionWrite($findings, $offset, $connection);
         }
 
-        foreach ($this->matches('/(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)\s*->\s*(?P<method>save|saveQuietly|update|updateQuietly|delete|deleteQuietly|forceDelete|forceDeleteQuietly|restore|restoreQuietly|touch|touchQuietly|push|pushQuietly|increment|decrement)\s*\(/i') as $match) {
+        $instanceMethods = OperationCatalog::alternation(OperationCatalog::ELOQUENT_INSTANCE_MUTATIONS);
+        foreach ($this->matches('/(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)\s*->\s*(?P<method>'.$instanceMethods.')\s*\(/i') as $match) {
             $offset = $match['offset'];
             if ($this->eligibleTransaction($offset) === null) {
                 continue;
@@ -1415,9 +1612,53 @@ final class SourceScanner
             if ($class === null || ! $this->classIndex->isEloquentModel($class)) {
                 continue;
             }
-            $connection = $this->classIndex->modelConnection($class) ?? $this->config->defaultDatabaseConnection;
+            $connection = $this->localModelConnectionForVariable(
+                $offset,
+                $this->captured($match, 'var'),
+                $class,
+            );
             $this->reportCrossConnectionWrite($findings, $offset, $connection);
         }
+
+        $relationMethods = OperationCatalog::alternation(OperationCatalog::RELATION_MUTATIONS);
+        foreach ($this->matches('/(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)\s*->\s*(?P<relation>[A-Za-z_][A-Za-z0-9_]*)\s*\(\s*\)\s*->\s*(?P<method>'.$relationMethods.')\s*\(/i') as $match) {
+            $offset = $match['offset'];
+            if ($this->eligibleTransaction($offset) === null) {
+                continue;
+            }
+            $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
+            if ($class === null || ! $this->classIndex->isEloquentModel($class)) {
+                continue;
+            }
+            $target = $this->classIndex->modelRelationTarget($class, $this->captured($match, 'relation'));
+            if ($target === null) {
+                continue;
+            }
+            $parentConnection = $this->localModelConnectionForVariable($offset, $this->captured($match, 'var'), $class);
+            $connection = $this->classIndex->modelConnection($target) ?? $parentConnection;
+            $this->reportCrossConnectionWrite($findings, $offset, $connection);
+        }
+    }
+
+    private function localModelConnectionForVariable(int $offset, string $variable, string $class): string
+    {
+        $connection = $this->classIndex->modelConnection($class) ?? $this->config->defaultDatabaseConnection;
+        $scope = $this->callableScopeAt($offset);
+        $seen = false;
+
+        foreach ($this->matches('/'.preg_quote($variable, '/').'\s*->\s*setConnection\s*\(/i') as $match) {
+            if ($match['offset'] >= $offset || $this->callableScopeAt($match['offset']) !== $scope) {
+                continue;
+            }
+            if ($seen || $this->conditionalControlScopeAt($match['offset']) !== null) {
+                return '@dynamic';
+            }
+            $seen = true;
+            $literal = StaticExpressionResolver::firstStringArgument(substr($this->source, $match['offset'] + strpos($match['matches'][0][0], 'setConnection')));
+            $connection = $literal ?? '@dynamic';
+        }
+
+        return $connection;
     }
 
     private function eloquentConnectionFromStatement(string $statement, string $class): string
@@ -1444,49 +1685,46 @@ final class SourceScanner
                 if ($tx === null) {
                     continue;
                 }
-                [$severity, $driver] = $this->implicitCommitSeverity($tx);
+                [$severity, $driver, $semantics] = $this->implicitCommitSeverity($tx);
                 $this->appendFinding($findings, $offset, 'TG012', $severity,
                     'Schema/DDL work is executed inside an application transaction; implicit-commit behavior depends on the active database driver.',
                     'Keep schema changes in migrations or explicit schema-management flows outside normal application transactions.', 'high',
-                    ['database_driver' => $driver ?? 'unknown', 'database_connection' => $tx['connection']]);
+                    ['database_driver' => $driver ?? 'unknown', 'database_connection' => $tx['connection'], 'ddl_semantics' => $semantics]);
             }
         }
 
-        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\DB', 'DB') as $alias) {
-            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>statement|unprepared)\s*\(\s*(?P<quote>[\'\"])(?P<sql>.*?)(?:\\k<quote>)/is';
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\DB', 'DB') as $alias) {
+            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>statement|unprepared)\s*\(/i';
             foreach ($this->matches($pattern) as $match) {
                 $offset = $match['offset'];
                 $tx = $this->eligibleTransaction($offset);
                 if ($tx === null) {
                     continue;
                 }
-                $sql = ltrim($this->captured($match, 'sql'));
-                if (preg_match('/^(CREATE|ALTER|DROP|TRUNCATE|RENAME|LOCK\s+TABLES|UNLOCK\s+TABLES|SET\s+AUTOCOMMIT)\b/i', $sql) !== 1) {
+                $call = substr($this->source, $offset + strpos($match['matches'][0][0], $this->captured($match, 'method')));
+                $sql = StaticExpressionResolver::firstStringArgument($call);
+                if ($sql === null || preg_match('/^(CREATE|ALTER|DROP|TRUNCATE|RENAME|LOCK\s+TABLES|UNLOCK\s+TABLES|SET\s+AUTOCOMMIT)\b/i', ltrim($sql)) !== 1) {
                     continue;
                 }
-                [$severity, $driver] = $this->implicitCommitSeverity($tx);
+                [$severity, $driver, $semantics] = $this->implicitCommitSeverity($tx);
                 $this->appendFinding($findings, $offset, 'TG012', $severity,
-                    'A SQL statement with database-specific transaction semantics is executed inside a Laravel transaction.',
+                    'A statically resolved SQL statement with driver-specific transaction semantics is executed inside a Laravel transaction.',
                     'Move DDL/implicit-commit statements outside normal application transactions and let migrations/schema tooling own schema changes.', 'high',
-                    ['database_driver' => $driver ?? 'unknown', 'database_connection' => $tx['connection']]);
+                    ['database_driver' => $driver ?? 'unknown', 'database_connection' => $tx['connection'], 'ddl_semantics' => $semantics]);
             }
         }
     }
 
     /**
      * @param  TransactionRegion  $tx
-     * @return array{Severity,string|null}
+     * @return array{Severity,string|null,string}
      */
     private function implicitCommitSeverity(array $tx): array
     {
         $driver = $this->config->databaseDriver($tx['connection']);
-        if ($driver === null) {
-            return [Severity::Critical, null];
-        }
+        $policy = DatabaseDriverPolicy::ddl($driver);
 
-        return in_array(strtolower($driver), ['mysql', 'mariadb'], true)
-            ? [Severity::Critical, $driver]
-            : [Severity::Warning, $driver];
+        return [$policy['severity'], $driver, $policy['semantics']];
     }
 
     /** @param list<Finding> $findings */
@@ -2313,6 +2551,43 @@ final class SourceScanner
         }
 
         return false;
+    }
+
+    /**
+     * @param  list<Finding>  $findings
+     * @param  TransactionRegion  $tx
+     */
+    private function appendPendingDispatchLifecycleFindings(array &$findings, int $offset, array $tx, ?ClassMetadata $metadata): void
+    {
+        if ($metadata === null) {
+            return;
+        }
+        if ($metadata->preparesForDispatch()) {
+            $this->appendFinding($findings, $offset, 'TG022', Severity::Warning,
+                "Job [{$this->basename($metadata->name)}] implements PreparesForDispatch; prepareForDispatch() runs synchronously before Laravel can defer queueing until commit.",
+                'Keep prepareForDispatch() free of irreversible work or construct/dispatch the job after commit.', 'high',
+                ['transaction_type' => $tx['type']]);
+        }
+        if ($metadata->uniqueBeforeDispatch() || $metadata->debounced) {
+            $kind = $metadata->uniqueBeforeDispatch() && $metadata->debounced ? 'unique/debounce' : ($metadata->uniqueBeforeDispatch() ? 'unique' : 'debounce');
+            $this->appendFinding($findings, $offset, 'TG023', Severity::Warning,
+                "PendingDispatch may acquire {$kind} cache state for [{$this->basename($metadata->name)}] before queue after-commit deferral takes effect.",
+                'Dispatch after commit when pre-commit cache-lock state is not acceptable; Laravel may compensate locks on rollback but the state exists while the transaction is open.', 'high',
+                ['transaction_type' => $tx['type'], 'lock_kind' => $kind]);
+        }
+    }
+
+    private function conditionalDispatchIsSkipped(string $statement, string $method): bool
+    {
+        if (! in_array($method, ['dispatchIf', 'dispatchUnless'], true)) {
+            return false;
+        }
+        $condition = StaticExpressionResolver::booleanFirstArgument($statement, $method);
+        if ($condition === null) {
+            return false;
+        }
+
+        return $method === 'dispatchIf' ? ! $condition : $condition;
     }
 
     private function jobDispatchIsAfterCommitSafe(string $statement, ?ClassMetadata $metadata): bool

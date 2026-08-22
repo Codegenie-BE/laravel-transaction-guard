@@ -69,6 +69,7 @@ final class TransactionGuardCommand extends Command
                 defaultDatabaseConnection: $this->stringConfig('database.default', '@default'),
                 databaseDriverByConnection: $this->databaseDriverMap(),
                 allowEmptyScan: (bool) config('transaction-guard.allow_empty_scan', false),
+                failOnUnresolvedTransaction: (bool) config('transaction-guard.fail_on_unresolved_transaction', false),
                 projectRoot: base_path(),
             );
 
@@ -117,6 +118,9 @@ final class TransactionGuardCommand extends Command
                 : $this->stringConfig('transaction-guard.fail_on', 'warning'),
         );
         if ($result->hasDiagnostics()) {
+            return self::FAILURE;
+        }
+        if ($analysisConfig->failOnUnresolvedTransaction && $this->containsRule($result->findings, 'TG014')) {
             return self::FAILURE;
         }
         if ($failOn === 'never') {
@@ -292,6 +296,18 @@ final class TransactionGuardCommand extends Command
             Severity::Warning => 'warning',
             Severity::Info => 'note',
         };
+    }
+
+    /** @param list<Finding> $findings */
+    private function containsRule(array $findings, string $rule): bool
+    {
+        foreach ($findings as $finding) {
+            if ($finding->rule === $rule) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return list<string> */

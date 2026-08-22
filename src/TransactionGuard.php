@@ -10,6 +10,7 @@ use Codegenie\TransactionGuard\Analysis\Baseline;
 use Codegenie\TransactionGuard\Analysis\ClassMetadataIndex;
 use Codegenie\TransactionGuard\Analysis\Finding;
 use Codegenie\TransactionGuard\Analysis\RuleCatalog;
+use Codegenie\TransactionGuard\Analysis\Severity;
 use Codegenie\TransactionGuard\Analysis\SourceScanner;
 use RecursiveCallbackFilterIterator;
 use RecursiveDirectoryIterator;
@@ -18,6 +19,9 @@ use SplFileInfo;
 
 final class TransactionGuard
 {
+    /** @var array<string, Finding> */
+    private array $discoveryDiagnostics = [];
+
     public function __construct(private readonly AnalysisConfig $config = new AnalysisConfig) {}
 
     /**
@@ -26,14 +30,15 @@ final class TransactionGuard
      */
     public function analyze(array $paths, array $excludePatterns = [], ?Baseline $baseline = null): AnalysisResult
     {
+        $this->discoveryDiagnostics = [];
         $files = $this->discoverPhpFiles($paths, $excludePatterns);
-        if ($files === [] && ! $this->config->allowEmptyScan) {
+        if ($files === [] && $this->discoveryDiagnostics === [] && ! $this->config->allowEmptyScan) {
             throw new \InvalidArgumentException('Transaction Guard did not discover any PHP files to analyze.');
         }
         $index = ClassMetadataIndex::fromFiles($files);
         $scanner = new SourceScanner($index, $this->config);
         $findings = [];
-        $diagnostics = [];
+        $diagnostics = array_values($this->discoveryDiagnostics);
         $baselineOccurrences = [];
 
         foreach ($files as $file) {
@@ -68,6 +73,8 @@ final class TransactionGuard
      * @param  list<string>  $paths
      * @param  list<string>  $excludePatterns
      * @return list<string>
+     *
+     * @phpstan-impure
      */
     public function discoverPhpFiles(array $paths, array $excludePatterns = []): array
     {
@@ -89,10 +96,24 @@ final class TransactionGuard
                 continue;
             }
 
-            $directory = new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS);
+            try {
+                $directory = new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS);
+            } catch (\UnexpectedValueException $exception) {
+                $this->recordDiscoveryDiagnostic($path, $exception->getMessage());
+
+                continue;
+            }
             $filter = new RecursiveCallbackFilterIterator(
                 $directory,
-                fn (SplFileInfo $entry): bool => ! $this->excluded($entry->getPathname(), $excludePatterns),
+                function (SplFileInfo $entry) use ($excludePatterns): bool {
+                    if ($entry->isDir() && ! is_readable($entry->getPathname())) {
+                        $this->recordDiscoveryDiagnostic($entry->getPathname(), 'Directory is not readable.');
+
+                        return false;
+                    }
+
+                    return ! $this->excluded($entry->getPathname(), $excludePatterns);
+                },
             );
             $iterator = new RecursiveIteratorIterator(
                 $filter,
@@ -116,6 +137,22 @@ final class TransactionGuard
         sort($files);
 
         return $files;
+    }
+
+    private function recordDiscoveryDiagnostic(string $path, string $message): void
+    {
+        $normalized = realpath($path) ?: $path;
+        $this->discoveryDiagnostics[$normalized] ??= new Finding(
+            rule: 'TG903',
+            severity: Severity::Error,
+            message: 'Unable to traverse requested source path: '.$message,
+            file: $normalized,
+            line: 1,
+            snippet: '',
+            remediation: 'Fix source-directory permissions or exclusions so Transaction Guard can analyze the complete requested tree.',
+            confidence: 'high',
+            projectRoot: $this->config->projectRoot,
+        );
     }
 
     /** @param  list<string>  $patterns */
