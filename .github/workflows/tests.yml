@@ -24,8 +24,9 @@ jobs:
     name: Validate and write v0.4.0 hardening
     if: >-
       github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'release/v0.4.0-hardening' &&
-      github.event.pull_request.head.sha == '18ee8e4c97ed1c5f13024d518614c8ff591c0961'
+      github.actor != 'github-actions[bot]'
     permissions:
       contents: write
     runs-on: ubuntu-latest
