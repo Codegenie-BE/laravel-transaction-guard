@@ -1,6 +1,8 @@
 name: V0.2 branch maintenance
 
 on:
+  issues:
+    types: [opened]
   pull_request_target:
     types: [reopened]
 
@@ -16,7 +18,10 @@ jobs:
   fix:
     if: >-
       github.actor == 'jordyloeuille' &&
-      github.event.pull_request.head.ref == 'feature/v0.2-analyzer-hardening-clean'
+      (
+        (github.event_name == 'issues' && github.event.issue.title == 'Run final Transaction Guard v0.2 validation') ||
+        (github.event_name == 'pull_request_target' && github.event.pull_request.head.ref == 'feature/v0.2-analyzer-hardening-clean')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -29,32 +34,94 @@ jobs:
           ref: feature/v0.2-analyzer-hardening-clean
           fetch-depth: 0
 
-      - name: Apply remaining analyzer changes
+      - name: Apply final analyzer fixes
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('src/Analysis/SourceScanner.php')
-          text = path.read_text()
+          source = Path('src/Analysis/SourceScanner.php')
+          text = source.read_text()
 
-          old = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
-          new = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        if ($this->transactions === []) {\n            return [];\n        }\n\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
-          if old not in text:
-              raise SystemExit('Transaction fast-path insertion point not found')
-          text = text.replace(old, new, 1)
+          # Fast return for syntactically valid files with no database transaction.
+          fast_old = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
+          fast_new = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        if ($this->transactions === []) {\n            return [];\n        }\n\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n\n        $findings = [];\n"
+          if fast_old in text:
+              text = text.replace(fast_old, fast_new, 1)
 
-          old = "                $looksLikeJob = $metadata?->queued() === true\n"
-          new = "                $isGlobalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\?dispatch\\s*\\(\\s*new\\s+/i', $statement) === 1;\n                $looksLikeJob = $isGlobalDispatchHelper\n                    || $metadata?->queued() === true\n"
-          if old not in text:
-              raise SystemExit('Global dispatch classification insertion point not found')
-          text = text.replace(old, new, 1)
-          path.write_text(text)
+          # The global dispatch helper is itself evidence of Laravel bus dispatch.
+          job_old = "                $looksLikeJob = $metadata?->queued() === true\n"
+          job_new = "                $isGlobalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\?dispatch\\s*\\(\\s*new\\s+/i', $statement) === 1;\n                $looksLikeJob = $isGlobalDispatchHelper\n                    || $metadata?->queued() === true\n"
+          if job_old in text:
+              text = text.replace(job_old, job_new, 1)
+
+          # PHPStan can prove metadata is non-null whenever $queued is true here.
+          start = text.index('    private function scanNotifications')
+          end = text.index('    private function scanBroadcasts', start)
+          section = text[start:end]
+          section = section.replace('$metadata?->queueAfterCommit()', '$metadata->queueAfterCommit()', 1)
+          text = text[:start] + section + text[end:]
+
+          # Avoid by-reference closure state that PHPStan correctly cannot model.
+          flush_old = '''            $flush = function () use (&$regions, &$groupStart, &$groupEnd, &$depth): void {
+                if ($groupStart === null) {
+                    return;
+                }
+
+                $end = $groupEnd ?? strlen($this->source);
+                $regions[] = [
+                    'start' => $groupStart['end'],
+                    'end' => $end,
+                    'line' => $this->lineAtOffset($groupStart['offset']),
+                    'type' => 'manual',
+                    'attempts' => 1,
+                    'connection' => $groupStart['connection'],
+                    'callableStart' => $groupStart['end'],
+                    'callableEnd' => $end,
+                ];
+
+                $groupStart = null;
+                $groupEnd = null;
+                $depth = 0;
+            };
+'''
+          flush_new = '''            /** @param DatabaseControlCall|null $start */
+            $flush = function (?array $start, ?int $endOffset) use (&$regions): void {
+                if ($start === null) {
+                    return;
+                }
+
+                $end = $endOffset ?? strlen($this->source);
+                $regions[] = [
+                    'start' => $start['end'],
+                    'end' => $end,
+                    'line' => $this->lineAtOffset($start['offset']),
+                    'type' => 'manual',
+                    'attempts' => 1,
+                    'connection' => $start['connection'],
+                    'callableStart' => $start['end'],
+                    'callableEnd' => $end,
+                ];
+            };
+'''
+          if flush_old in text:
+              text = text.replace(flush_old, flush_new, 1)
+              text = text.replace("                        $flush();\n                    }\n                    if ($groupStart === null) {", "                        $flush($groupStart, $groupEnd);\n                        $groupStart = null;\n                        $groupEnd = null;\n                        $depth = 0;\n                    }\n                    if ($groupStart === null) {", 1)
+              text = text.replace("            $flush();\n        }\n\n        return $regions;", "            $flush($groupStart, $groupEnd);\n        }\n\n        return $regions;", 1)
+          source.write_text(text)
+
+          metadata = Path('src/Analysis/ClassMetadataIndex.php')
+          text = metadata.read_text()
+          signature = '    private function queueNameFor(string $class, array $seen = []): ?string\n'
+          if '/** @param  array<string, true>  $seen */\n' + signature not in text:
+              if signature not in text:
+                  raise SystemExit('queueNameFor signature not found')
+              text = text.replace(signature, '    /** @param  array<string, true>  $seen */\n' + signature, 1)
+          metadata.write_text(text)
 
           matrix = Path('tests/Support/ScenarioMatrix.php')
           text = matrix.read_text()
-          scenario_name = "global dispatch helper detects job outside Jobs namespace"
-          if scenario_name not in text:
+          if 'global dispatch helper detects job outside Jobs namespace' not in text:
               marker = "    'fully qualified DB and Http facades are detected' => [\n"
               if marker not in text:
                   raise SystemExit('Scenario insertion marker not found')
@@ -74,10 +141,10 @@ PHP,
 
           analysis = Path('docs/ANALYSIS.md')
           text = analysis.read_text()
-          sentence = ' Files with no detected database transaction return immediately after transaction discovery, before any side-effect rule scans run.'
+          sentence = 'Files with no detected database transaction return immediately after transaction discovery, before any side-effect rule scans run.'
           needle = 'The analyzer hot path now pre-indexes source lines and non-code token ranges, caches statement/facade lookups, uses binary-search token/line lookup, and avoids temporary filter/sort allocations when selecting transaction/callable regions.'
-          if sentence.strip() not in text and needle in text:
-              analysis.write_text(text.replace(needle, needle + sentence, 1))
+          if sentence not in text and needle in text:
+              analysis.write_text(text.replace(needle, needle + ' ' + sentence, 1))
           PY
 
       - name: Setup PHP for formatting
@@ -99,9 +166,9 @@ PHP,
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- src/Analysis/SourceScanner.php tests/Support/ScenarioMatrix.php docs/ANALYSIS.md
+          git add -- src/Analysis/SourceScanner.php src/Analysis/ClassMetadataIndex.php tests/Support/ScenarioMatrix.php docs/ANALYSIS.md
           if ! git diff --cached --quiet; then
-            git commit -m 'perf: finish analyzer hot-path hardening'
+            git commit -m 'fix: complete v0.2 analyzer validation'
             git push origin HEAD:feature/v0.2-analyzer-hardening-clean
           fi
           echo "head-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -151,84 +218,50 @@ PHP,
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.fix.outputs.head-sha }}
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: ${{ matrix.php }}
           coverage: none
           tools: composer:v2
-
-      - name: Pin Laravel test dependencies
-        run: composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-update --no-interaction
-
-      - name: Install dependencies
-        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-
-      - name: Validate Composer metadata
-        run: composer validate --strict
-
-      - name: Audit dependencies
-        run: composer audit --no-interaction
-
-      - name: Run smoke regression matrix
-        run: composer test:smoke
-
-      - name: Run Pest suite
-        run: composer test
-
-      - name: Check formatting
-        run: composer format:test
-
-      - name: Run PHPStan
-        run: composer analyse
+      - run: composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-update --no-interaction
+      - run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+      - run: composer validate --strict
+      - run: composer audit --no-interaction
+      - run: composer test:smoke
+      - run: composer test
+      - run: composer format:test
+      - run: composer analyse
 
   coverage:
     needs: fix
     if: needs.fix.result == 'success'
-    name: Coverage / PHP 8.5 / Laravel 13
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
-      - name: Checkout fixed branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.fix.outputs.head-sha }}
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.5'
           coverage: xdebug
           tools: composer:v2
-
-      - name: Pin Laravel 13 test dependencies
-        run: composer require --dev 'orchestra/testbench:^11.0' 'pestphp/pest:^4.0' --no-update --no-interaction
-
-      - name: Install dependencies
-        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-
-      - name: Enforce coverage baseline
-        run: composer test:coverage
+      - run: composer require --dev 'orchestra/testbench:^11.0' 'pestphp/pest:^4.0' --no-update --no-interaction
+      - run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+      - run: composer test:coverage
 
   validation-status:
-    needs:
-      - fix
-      - compatibility
-      - coverage
+    needs: [fix, compatibility, coverage]
     if: always() && needs.fix.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     steps:
-      - name: Publish v0.2 validation status
+      - name: Publish validation status
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ needs.fix.outputs.head-sha }}
           COMPATIBILITY_RESULT: ${{ needs.compatibility.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
-        shell: bash
         run: |
           state=success
           description='Full Laravel 12/13 compatibility and coverage matrix passed'
@@ -236,10 +269,5 @@ PHP,
             state=failure
             description='V0.2 compatibility or coverage validation failed'
           fi
-
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
-            -f state="${state}" \
-            -f context='v0.2-maintenance' \
-            -f description="${description}"
-
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" -f state="${state}" -f context='v0.2-maintenance' -f description="${description}"
           [ "${state}" = 'success' ]
