@@ -67,4 +67,48 @@ code = code[:start] + replacement + code[end:]
 
 exec(compile(code, str(path), 'exec'), {'__file__': str(path), '__name__': '__main__'})
 
-# This tracked runner is intentionally removed after the validated finalize run.
+# PHPStan-max cleanup for the generated namespace-context implementation.
+root = path.resolve().parents[1]
+
+metadata_path = root / 'src/Analysis/ClassMetadataIndex.php'
+metadata = metadata_path.read_text()
+parse_signature = '    private function parseContext(array $tokens): FileContext\n'
+parse_pos = metadata.find(parse_signature)
+if parse_pos >= 0:
+    doc_pos = metadata.rfind('    /**', 0, parse_pos)
+    next_pos = metadata.find('    /** @return array<string, string> */\n    private function parseUseClause', parse_pos)
+    if doc_pos < 0 or next_pos < 0:
+        raise RuntimeError('unable to remove obsolete parseContext method')
+    metadata = metadata[:doc_pos] + metadata[next_pos:]
+metadata_path.write_text(metadata)
+
+map_path = root / 'src/Analysis/FileContextMap.php'
+map_source = map_path.read_text()
+old = "        return $this->ranges[array_key_last($this->ranges)]['context'] ?? new FileContext('', []);"
+new = "        $last = array_key_last($this->ranges);\n\n        return $last !== null ? $this->ranges[$last]['context'] : new FileContext('', []);"
+if old not in map_source:
+    raise RuntimeError('FileContextMap fallback anchor missing')
+map_path.write_text(map_source.replace(old, new, 1))
+
+scanner_path = root / 'src/Analysis/SourceScanner.php'
+scanner = scanner_path.read_text()
+old = """    /** @param array{matches:array<int|string,mixed>} $match */
+    private function captured(array $match, string $name): string
+    {
+        $offset = $match['offset'] ?? null;
+        if (is_int($offset)) {
+            $this->context = $this->classIndex->contextFor($this->file, $offset);
+        }
+        $value = $match['matches'][$name] ?? '';
+"""
+new = """    /** @param array{offset:int,matches:array<int|string,mixed>} $match */
+    private function captured(array $match, string $name): string
+    {
+        $this->context = $this->classIndex->contextFor($this->file, $match['offset']);
+        $value = $match['matches'][$name] ?? '';
+"""
+if old not in scanner:
+    raise RuntimeError('SourceScanner captured() generated anchor missing')
+scanner_path.write_text(scanner.replace(old, new, 1))
+
+print('v0.3.0 final namespace/release patch applied with PHPStan cleanup')
