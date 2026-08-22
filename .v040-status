@@ -1,3 +1,3 @@
 v0.4.0 hardening patch applied
-PHP Parse error:  syntax error, unexpected namespaced name "Illuminate\Foundation\Events\D...", expecting ")" in src/Analysis/ClassMetadata.php on line 60
+PHP Parse error:  syntax error, unexpected token "\", expecting ")" in src/Analysis/ClassMetadataIndex.php on line 150
 xargs: php: exited with status 255; aborting
