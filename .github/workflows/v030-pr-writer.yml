@@ -43,6 +43,35 @@ jobs:
           fi
           find src -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 
+      - name: Trace enum connection metadata
+        shell: bash
+        run: |
+          php <<'PHP'
+          <?php
+          require 'src/Analysis/ClassMetadata.php';
+          require 'src/Analysis/FileContext.php';
+          require 'src/Analysis/ClassMetadataIndex.php';
+          $source = <<<'CODE'
+          <?php
+          namespace App\Jobs;
+          use Illuminate\Contracts\Queue\ShouldQueue;
+          use Illuminate\Queue\Attributes\Connection;
+          enum QueueConnection: string { case Redis = 'redis'; }
+          #[Connection(QueueConnection::Redis)]
+          class ProcessOrder implements ShouldQueue {}
+          CODE;
+          $file = tempnam(sys_get_temp_dir(), 'tg-enum-').'.php';
+          file_put_contents($file, $source);
+          $index = Codegenie\TransactionGuard\Analysis\ClassMetadataIndex::fromFiles([$file]);
+          $metadata = $index->metadata('App\\Jobs\\ProcessOrder');
+          fwrite(STDOUT, 'attribute='.var_export($metadata?->queueConnectionAttribute, true).PHP_EOL);
+          fwrite(STDOUT, 'resolved='.var_export($index->queueConnection('App\\Jobs\\ProcessOrder'), true).PHP_EOL);
+          $reflection = new ReflectionClass($index);
+          $property = $reflection->getProperty('enumCaseValues');
+          fwrite(STDOUT, 'enums='.json_encode($property->getValue($index), JSON_UNESCAPED_SLASHES).PHP_EOL);
+          @unlink($file);
+          PHP
+
       - name: Install dependencies
         run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
 
