@@ -949,7 +949,51 @@ PHP,
         'rules' => ['TG006'],
     ],
 
-    'commented side effect inside transaction is ignored' => [
+    'afterCommit text inside string does not make dispatch safe' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class StringAfterCommitJob implements ShouldQueue {}
+DB::transaction(function () { StringAfterCommitJob::dispatch('->afterCommit('); });
+CODE,
+        'rules' => ['TG001'],
+    ],
+    'beforeCommit text inside string is not an explicit override' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class StringBeforeCommitJob implements ShouldQueue {}
+DB::transaction(function () { StringBeforeCommitJob::dispatch('->beforeCommit('); });
+CODE,
+        'rules' => ['TG001'],
+        'absent' => ['TG010'],
+    ],
+    'HTTP mutating method text inside string is ignored' => [
+        'code' => <<<'CODE'
+<?php
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+DB::transaction(function () { Http::withBody('post(')->get('https://example.test'); });
+CODE,
+        'rules' => [],
+        'absent' => ['TG006'],
+    ],
+    'onConnection text inside string does not override queue connection' => [
+        'code' => <<<'CODE'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class StringConnectionJob implements ShouldQueue {}
+DB::transaction(function () { StringConnectionJob::dispatch("->onConnection('redis')"); });
+CODE,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['database' => false, 'redis' => true]],
+    ],    'commented side effect inside transaction is ignored' => [
         'code' => <<<'PHP'
 <?php
 use Illuminate\Support\Facades\DB;
