@@ -342,8 +342,48 @@ final class SourceScanner
                     continue;
                 }
 
-                if ($method === 'dispatch' && $this->callArgumentContainsPreference($statement, 'dispatch', 'beforeCommit')) {
-                    $this->appendExplicitBeforeCommitFinding($findings, $offset);
+                if ($method === 'dispatch') {
+                    $jobClass = $this->newClassFromStatement($statement);
+                    $jobMetadata = $jobClass !== null
+                        ? $this->classIndex->metadata($this->context->resolve($jobClass))
+                        : null;
+
+                    if ($jobMetadata !== null && ! $jobMetadata->queued()) {
+                        $this->appendFinding($findings, $offset, 'TG016', Severity::Warning,
+                            'Bus::dispatch() executes a non-queueable command synchronously while the database transaction is open.',
+                            'Move the command outside the transaction when its handler can observe committed state or cause irreversible effects.', 'high');
+                        $this->appendRetryFinding($findings, $offset, $tx, 'synchronous bus dispatch');
+
+                        continue;
+                    }
+
+                    if ($this->callArgumentContainsPreference($statement, 'dispatch', 'beforeCommit')
+                        || $jobMetadata?->explicitlyBeforeCommit() === true) {
+                        $this->appendExplicitBeforeCommitFinding($findings, $offset);
+                        $this->appendRetryFinding($findings, $offset, $tx, 'bus dispatch');
+
+                        continue;
+                    }
+
+                    if ($jobMetadata !== null) {
+                        if ($this->callArgumentContainsPreference($statement, 'dispatch', 'afterCommit')
+                            || $jobMetadata->queueAfterCommit()
+                            || $this->queueConnectionDispatchesAfterCommit($statement, $jobMetadata)) {
+                            continue;
+                        }
+
+                        $this->appendFinding($findings, $offset, 'TG001', Severity::Error,
+                            "Bus::dispatch() may enqueue [{$this->basename($jobMetadata->name)}] before the surrounding database transaction commits.",
+                            'Use afterCommit(), ShouldQueueAfterCommit, a safe queue after_commit policy, or dispatch after the transaction.', 'high',
+                            ['queue_connection' => $this->queueConnectionFromStatement($statement, $jobMetadata)]);
+                        $this->appendRetryFinding($findings, $offset, $tx, 'bus dispatch');
+
+                        continue;
+                    }
+
+                    $this->appendFinding($findings, $offset, 'TG001', Severity::Warning,
+                        'Bus::dispatch() cannot be proven queued; the unresolved command may execute synchronously or enqueue before commit.',
+                        'Make the command class analyzable, or move dispatch after commit so either Laravel execution path is transaction-safe.', 'medium');
                     $this->appendRetryFinding($findings, $offset, $tx, 'bus dispatch');
 
                     continue;
@@ -376,15 +416,6 @@ final class SourceScanner
                     continue;
                 }
 
-                if ($this->callArgumentContainsPreference($statement, 'dispatch', 'afterCommit')
-                    || $this->queueConnectionDispatchesAfterCommit($statement)) {
-                    continue;
-                }
-
-                $this->appendFinding($findings, $offset, 'TG001', Severity::Error,
-                    'Bus::dispatch() may execute or enqueue work before the surrounding database transaction commits.',
-                    'Chain afterCommit(), enable after_commit on the selected queue connection, or dispatch after the transaction.', 'high');
-                $this->appendRetryFinding($findings, $offset, $tx, 'bus dispatch');
             }
         }
 
