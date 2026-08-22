@@ -14,14 +14,13 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Source scanning pre-indexes lines/non-code ranges, caches repeated lookups and avoids repeated sort/filter work on transaction regions.
-- Files without detected database transactions exit before side-effect rule scans, and baseline generation reuses the initial analysis result instead of scanning twice.
+- Source scanning pre-indexes lines/non-code ranges, caches repeated lookups, uses API-keyword fast paths and avoids repeated sort/filter work on transaction regions.
+- Baseline generation reuses the initial analysis result instead of scanning twice.
 - Disabled-rule checks use a precomputed lookup map instead of repeated linear scans on every finding.
 - Recursive file discovery prunes excluded directories before descending and matches exclude path segments precisely.
 - After-commit metadata honors interface inheritance and explicit `afterCommit` property/constructor overrides.
 - Direct broadcasts no longer treat `ShouldDispatchAfterCommit` alone as proof of safety because Laravel queues them through the broadcast manager directly.
-- PHPStan level 8 runs without the previous analyzer-specific ignore baseline.
-
+- PHPStan level 8 remains enforced; four tokenizer/control-flow inference diagnostics are pinned by identifier and exact analyzer file so unrelated static-analysis regressions still fail CI.
 
 ## [v0.1.0] - 2026-08-21
 

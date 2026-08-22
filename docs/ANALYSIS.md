@@ -96,7 +96,7 @@ This makes the package suitable for local development and CI without becoming a 
 
 ## v0.2 analyzer hardening
 
-The analyzer hot path pre-indexes source lines and non-code token ranges, caches statement/facade lookups, uses binary-search token/line lookup, and avoids temporary filter/sort allocations when selecting transaction/callable regions. Files with no detected database transaction return immediately after transaction discovery, before any side-effect rule scans run. Directory discovery prunes excluded directories before descending into them.
+The analyzer hot path pre-indexes source lines and non-code token ranges, caches statement/facade lookups, uses binary-search token/line lookup, avoids temporary filter/sort allocations when selecting transaction/callable regions, and skips rule families early when their relevant API keywords are absent. Directory discovery prunes excluded directories before descending into them.
 
 Laravel 13 queue metadata follows the runtime resolver more closely: exact classes, parents, expanded interfaces, recursive traits, route arrays, queue forwarding and `#[Queue]`/constructor queue names are modeled when statically resolvable. Raw queue pushes are treated separately because driver `pushRaw()` paths bypass Laravel's job-aware `enqueueUsing()` after-commit decision.
 
