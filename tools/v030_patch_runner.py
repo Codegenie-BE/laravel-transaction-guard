@@ -64,8 +64,7 @@ finding = finding.replace(
 )
 finding_path.write_text(finding)
 
-# PHP readonly classes cannot declare a non-promoted property with a default.
-# Assign the compiled pattern cache exactly once from the constructor instead.
+# Write readonly configuration state using local accumulation and one assignment.
 config_path = root / 'src/Analysis/AnalysisConfig.php'
 config = config_path.read_text()
 config = config.replace(
@@ -75,7 +74,35 @@ config = config.replace(
 )
 config = config.replace(
     '        $this->disabledRuleLookup = $normalizedDisabled;\n\n        foreach ($this->customSideEffectPatterns as $pattern) {',
-    '        $this->disabledRuleLookup = $normalizedDisabled;\n        $this->compiledCustomSideEffectPatterns = [];\n\n        foreach ($this->customSideEffectPatterns as $pattern) {',
+    '        $this->disabledRuleLookup = $normalizedDisabled;\n        $compiledCustomSideEffectPatterns = [];\n\n        foreach ($this->customSideEffectPatterns as $pattern) {',
+    1,
+)
+config = config.replace(
+    '            $this->compiledCustomSideEffectPatterns[] = $regex;',
+    '            $compiledCustomSideEffectPatterns[] = $regex;',
+    1,
+)
+config = config.replace(
+    '        }\n    }\n\n    /** @return list<string> */\n    public function customRegexes(): array',
+    '        }\n\n        $this->compiledCustomSideEffectPatterns = $compiledCustomSideEffectPatterns;\n    }\n\n    /** @return list<string> */\n    public function customRegexes(): array',
     1,
 )
 config_path.write_text(config)
+
+# PHPStan knows Composer class-loader callable arrays are non-empty.
+metadata_path = root / 'src/Analysis/ClassMetadataIndex.php'
+metadata = metadata_path.read_text()
+metadata = metadata.replace(
+    "$loader = is_array($autoload) ? ($autoload[0] ?? null) : null;",
+    "$loader = is_array($autoload) ? $autoload[0] : null;",
+    1,
+)
+metadata_path.write_text(metadata)
+
+# TransactionGuard lives one namespace above Analysis; import the canonical catalog.
+guard_path = root / 'src/TransactionGuard.php'
+guard = guard_path.read_text()
+needle = 'use Codegenie\\TransactionGuard\\Analysis\\Finding;\n'
+if 'use Codegenie\\TransactionGuard\\Analysis\\RuleCatalog;' not in guard:
+    guard = guard.replace(needle, needle + 'use Codegenie\\TransactionGuard\\Analysis\\RuleCatalog;\n', 1)
+guard_path.write_text(guard)
