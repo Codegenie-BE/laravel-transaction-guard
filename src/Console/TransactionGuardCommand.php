@@ -130,7 +130,7 @@ final class TransactionGuardCommand extends Command
         return $result;
     }
 
-    /** @param list<Finding> $findings */
+    /** @param  list<Finding>  $findings */
     private function render(string $format, array $findings, int $filesAnalyzed): void
     {
         if ($format === 'json') {
@@ -183,7 +183,7 @@ final class TransactionGuardCommand extends Command
     }
 
     /**
-     * @param list<string> $default
+     * @param  list<string>  $default
      * @return list<string>
      */
     private function stringListConfig(string $key, array $default = []): array
