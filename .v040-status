@@ -1,8 +1,20 @@
 v0.4.0 hardening patch applied
 Traceback (most recent call last):
-  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_final_runner.py", line 81, in <module>
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_final_runner.py", line 82, in <module>
     start, end = method_region(source, 'scanCache', 'scanRedis')
                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_final_runner.py", line 65, in method_region
     raise RuntimeError(f'{method} method not found')
 RuntimeError: scanCache method not found
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_resilient_runner.py", line 12, in <module>
+    runpy.run_path(str(runner), run_name='__main__')
+  File "<frozen runpy>", line 286, in run_path
+  File "<frozen runpy>", line 98, in _run_module_code
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/runner/work/laravel-transaction-guard/laravel-transaction-guard/tools/v040_final_runner.py", line 86, in <module>
+    raise RuntimeError('scanRedis method not found while inserting cache scanner')
+RuntimeError: scanRedis method not found while inserting cache scanner
