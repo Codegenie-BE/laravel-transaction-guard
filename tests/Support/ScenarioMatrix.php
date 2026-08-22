@@ -1282,6 +1282,64 @@ PHP,
         'rules' => ['TG017'],
         'absent' => ['TG001'],
     ],
+    'Laravel 13 Connection attribute unsafe connection overrides safe default' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\Attributes\Connection;
+use Illuminate\Support\Facades\DB;
+#[Connection('database')]
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true, 'database' => false]],
+    ],
+    'Laravel 13 Connection attribute safe connection overrides unsafe default' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\Attributes\Connection;
+use Illuminate\Support\Facades\DB;
+#[Connection('redis')]
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['redis' => true, 'database' => false]],
+    ],
+    'Laravel 13 Connection attribute wins over onConnection property' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\Attributes\Connection;
+use Illuminate\Support\Facades\DB;
+#[Connection('redis')]
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { ProcessOrder::dispatch()->onConnection('database'); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG001'],
+        'config' => ['queue_default' => 'database', 'queue_after_commit' => ['redis' => true, 'database' => false]],
+    ],
+    'Laravel 13 dynamic Connection attribute is not trusted as safe' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\Attributes\Connection;
+use Illuminate\Support\Facades\DB;
+#[Connection(QueueConnections::Primary)]
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { ProcessOrder::dispatch(); });
+PHP,
+        'rules' => ['TG001'],
+        'config' => ['queue_default' => 'redis', 'queue_after_commit' => ['redis' => true]],
+    ],
     'Laravel 13 Queue route safe connection is respected' => [
         'code' => <<<'PHP'
 <?php
