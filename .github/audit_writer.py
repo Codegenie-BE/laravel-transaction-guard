@@ -50,6 +50,12 @@ new_flush = '''            /** @param array{type:string,offset:int,end:int,scope
                 if ($start === null) {
                     return;
                 }
+                if (! isset($start['offset'], $start['end'], $start['connection'])
+                    || ! is_int($start['offset'])
+                    || ! is_int($start['end'])
+                    || ! is_string($start['connection'])) {
+                    return;
+                }
 
                 $end = $endOffset ?? strlen($this->source);
                 $regions[] = [
