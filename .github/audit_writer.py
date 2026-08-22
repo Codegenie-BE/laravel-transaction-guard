@@ -177,7 +177,7 @@ index.write_text(text)
 
 matrix = Path("tests/Support/ScenarioMatrix.php")
 text = matrix.read_text()
-marker = "    'constructor last afterCommit wins over beforeCommit' => [\n"
+marker = "    'job constructor queue connection unsafe override is respected' => [\n"
 scenarios = r'''    'afterCommit on another object does not configure the job' => [
         'code' => <<<'PHP'
 <?php
