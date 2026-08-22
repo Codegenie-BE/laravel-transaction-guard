@@ -50,3 +50,14 @@ replace('src/Analysis/SourceScanner.php',
 '''
 code = code[:start] + replacement + code[end:]
 exec(compile(code, str(path), 'exec'), {'__file__': str(path), '__name__': '__main__'})
+
+# re.sub replacement strings collapse one level of backslash escaping. Normalize
+# the generated PHP literal so a single backslash value is represented as '\\'.
+finding_path = Path(__file__).resolve().parents[1] / 'src/Analysis/Finding.php'
+finding = finding_path.read_text()
+finding = finding.replace(
+    "str_replace('\\', '/', realpath($root)",
+    "str_replace('\\\\', '/', realpath($root)",
+    1,
+)
+finding_path.write_text(finding)
