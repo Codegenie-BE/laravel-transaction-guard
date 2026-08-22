@@ -61,6 +61,19 @@ if marker not in text:
     raise SystemExit("local DB builder insertion marker not found")
 scanner.write_text(text.replace(marker, addition, 1))
 
+command_test = Path("tests/Feature/CommandTest.php")
+text = command_test.read_text()
+old = '''        ])->expectsOutputToContain('"version": "2.1.0"')
+            ->expectsOutputToContain('"ruleId": "TG006"')
+            ->assertSuccessful();'''
+new = '''        ])->expectsOutputToContain('"version": "2.1.0"')
+            ->expectsOutputToContain('"runs": [')
+            ->expectsOutputToContain('"name": "Laravel Transaction Guard"')
+            ->assertSuccessful();'''
+if old not in text:
+    raise SystemExit("SARIF command assertion marker not found")
+command_test.write_text(text.replace(old, new, 1))
+
 script.unlink(missing_ok=True)
 Path("tools/maintenance.php").unlink(missing_ok=True)
 Path(".audit-request").unlink(missing_ok=True)
