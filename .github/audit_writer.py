@@ -1,240 +1,251 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
+BRANCH = "audit/09-local-variable-payload-types"
+if len(sys.argv) != 2 or sys.argv[1] != BRANCH:
+    raise SystemExit("unsupported audit branch")
 
-def replace_once(text: str, old: str, new: str, label: str) -> str:
-    if old not in text:
-        raise SystemExit(f"{label}: expected source block not found")
-    return text.replace(old, new, 1)
+source = Path("src/Analysis/SourceScanner.php")
+text = source.read_text()
+old = """        $this->scanBroadcasts($findings);\n        $this->scanHttp($findings);\n"""
+new = """        $this->scanBroadcasts($findings);\n        $this->scanVariablePayloadEffects($findings);\n        $this->scanHttp($findings);\n"""
+if old not in text:
+    raise SystemExit("scan call marker missing")
+text = text.replace(old, new, 1)
 
-
-def point1() -> None:
-    source = Path("src/Analysis/SourceScanner.php")
-    text = source.read_text()
-    old = """                $metadata = $this->classIndex->metadata($resolved);\n                $method = $this->captured($match, 'method');\n                $statement = $this->statementAt($offset);\n                $looksLikeJob = $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n"""
-    new = """                $metadata = $this->classIndex->metadata($resolved);\n                $method = $this->captured($match, 'method');\n                $statement = $this->statementAt($offset);\n                $globalDispatchHelper = preg_match('/(?<![A-Za-z0-9_>])(?<!->)\\\\\\\\?dispatch\\\\s*\\\\(\\\\s*new\\\\s+/i', $statement) === 1;\n                $looksLikeJob = $globalDispatchHelper\n                    || $metadata?->queued() === true\n                    || str_contains(strtolower($resolved), '\\\\jobs\\\\')\n                    || preg_match('/\\\\\\\\Jobs\\\\\\\\/', $resolved) === 1;\n"""
-    source.write_text(replace_once(text, old, new, "point1 dispatch"))
-
-    matrix = Path("tests/Support/ScenarioMatrix.php")
-    text = matrix.read_text()
-    marker = "    'fully qualified DB and Http facades are detected' => [\n"
-    scenario = r'''    'global dispatch helper detects job outside Jobs namespace' => [
-        'code' => <<<'PHP'
-<?php
-namespace App\Work;
-use Illuminate\Support\Facades\DB;
-class RecalculateOrder {}
-DB::transaction(function () { dispatch(new RecalculateOrder()); });
-PHP,
-        'rules' => ['TG001'],
-    ],
-    'global dispatch helper outside Jobs namespace is safe after commit' => [
-        'code' => <<<'PHP'
-<?php
-namespace App\Work;
-use Illuminate\Support\Facades\DB;
-class RecalculateOrder {}
-DB::transaction(function () { dispatch(new RecalculateOrder())->afterCommit(); });
-PHP,
-        'rules' => [],
-        'absent' => ['TG001'],
-    ],
-'''
-    if "global dispatch helper detects job outside Jobs namespace" in text:
-        raise SystemExit("point1 scenarios already present")
-    matrix.write_text(replace_once(text, marker, scenario + marker, "point1 scenario marker"))
-
-
-def point2() -> None:
-    meta = Path("src/Analysis/ClassMetadataIndex.php")
-    text = meta.read_text()
-    signature = "    private function queueNameFor(string $class, array $seen = []): ?string\n"
-    doc = "    /** @param  array<string, true>  $seen */\n"
-    if doc + signature not in text:
-        text = replace_once(text, signature, doc + signature, "point2 queueNameFor")
-    meta.write_text(text)
-
-    source = Path("src/Analysis/SourceScanner.php")
-    text = source.read_text()
-    start = text.index("    private function scanNotifications")
-    end = text.index("    private function scanBroadcasts", start)
-    section = text[start:end]
-    old_nullsafe = "$metadata?->queueAfterCommit()"
-    if old_nullsafe not in section:
-        raise SystemExit("point2 notification nullsafe target not found")
-    section = section.replace(old_nullsafe, "$metadata->queueAfterCommit()", 1)
-    text = text[:start] + section + text[end:]
-
-    old_flush = '''            $flush = function () use (&$regions, &$groupStart, &$groupEnd, &$depth): void {
-                if ($groupStart === null) {
-                    return;
-                }
-
-                $end = $groupEnd ?? strlen($this->source);
-                $regions[] = [
-                    'start' => $groupStart['end'],
-                    'end' => $end,
-                    'line' => $this->lineAtOffset($groupStart['offset']),
-                    'type' => 'manual',
-                    'attempts' => 1,
-                    'connection' => $groupStart['connection'],
-                    'callableStart' => $groupStart['end'],
-                    'callableEnd' => $end,
-                ];
-
-                $groupStart = null;
-                $groupEnd = null;
-                $depth = 0;
-            };
-'''
-    new_flush = '''            /** @param DatabaseControlCall|null $start */
-            $flush = function (?array $start, ?int $endOffset) use (&$regions): void {
-                if ($start === null) {
-                    return;
-                }
-
-                $end = $endOffset ?? strlen($this->source);
-                $regions[] = [
-                    'start' => $start['end'],
-                    'end' => $end,
-                    'line' => $this->lineAtOffset($start['offset']),
-                    'type' => 'manual',
-                    'attempts' => 1,
-                    'connection' => $start['connection'],
-                    'callableStart' => $start['end'],
-                    'callableEnd' => $end,
-                ];
-            };
-'''
-    text = replace_once(text, old_flush, new_flush, "point2 manual transaction flush")
-    text = replace_once(
-        text,
-        "                        $flush();\n                    }\n                    if ($groupStart === null) {",
-        "                        $flush($groupStart, $groupEnd);\n                        $groupStart = null;\n                        $groupEnd = null;\n                        $depth = 0;\n                    }\n                    if ($groupStart === null) {",
-        "point2 nested manual flush call",
-    )
-    text = replace_once(
-        text,
-        "            $flush();\n        }\n\n        return $regions;",
-        "            $flush($groupStart, $groupEnd);\n        }\n\n        return $regions;",
-        "point2 final manual flush call",
-    )
-
-    old_captured = '''        $value = $match['matches'][$name] ?? '';
-        if (is_array($value)) {
-            return (string) $value[0];
+marker = """    /** @param  list<Finding>  $findings */\n    private function scanHttp(array &$findings): void\n"""
+method = r'''    /** @param list<Finding> $findings */
+    private function scanVariablePayloadEffects(array &$findings): void
+    {
+        foreach ($this->matches('/(?<![A-Za-z0-9_>])(?<!->)\\?dispatch\s*\(\s*(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/i') as $match) {
+            $offset = $match['offset'];
+            $tx = $this->eligibleTransaction($offset);
+            if ($tx === null) {
+                continue;
+            }
+            $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
+            $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
+            $statement = $this->statementAt($offset);
+            if ($metadata !== null && ! $metadata->queued()) {
+                $this->appendFinding($findings, $offset, 'TG016', Severity::Warning,
+                    "Dispatch of non-queueable [{$this->basename($class)}] executes synchronously while the database transaction is open.",
+                    'Move synchronous work outside the transaction when it can observe committed state or produce irreversible effects.', 'high');
+                $this->appendRetryFinding($findings, $offset, $tx, 'synchronous job dispatch');
+                continue;
+            }
+            if ($this->jobDispatchIsAfterCommitSafe($statement, $metadata)) {
+                continue;
+            }
+            $this->appendFinding($findings, $offset, 'TG001', $metadata === null ? Severity::Warning : Severity::Error,
+                $class === null
+                    ? 'A variable job payload is dispatched inside a transaction but its runtime type cannot be proven commit-safe.'
+                    : "Job [{$this->basename($class)}] may be dispatched before the surrounding database transaction commits.",
+                'Make the payload type statically visible, use afterCommit()/ShouldQueueAfterCommit, or dispatch after the transaction.',
+                $metadata === null ? 'medium' : 'high');
+            $this->appendRetryFinding($findings, $offset, $tx, 'job dispatch');
         }
 
-        return (string) $value;
-'''
-    new_captured = '''        $value = $match['matches'][$name] ?? '';
-        if (is_array($value)) {
-            $captured = $value[0] ?? '';
-
-            return is_string($captured) ? $captured : '';
+        foreach ($this->matches('/(?<![A-Za-z0-9_>])(?<!->)\\?event\s*\(\s*(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/i') as $match) {
+            $offset = $match['offset'];
+            $tx = $this->eligibleTransaction($offset);
+            if ($tx === null) {
+                continue;
+            }
+            $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
+            $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
+            if ($metadata?->eventAfterCommit() === true) {
+                continue;
+            }
+            $this->appendFinding($findings, $offset, 'TG002', Severity::Warning,
+                $class === null
+                    ? 'A variable event payload is dispatched while the database transaction is still open.'
+                    : "Event [{$this->basename($class)}] is dispatched before the surrounding transaction commits.",
+                'Implement ShouldDispatchAfterCommit, use DB::afterCommit(), or dispatch after the transaction.',
+                $metadata === null ? 'medium' : 'high');
+            $this->appendRetryFinding($findings, $offset, $tx, 'event dispatch');
         }
 
-        return is_string($value) ? $value : '';
-'''
-    text = replace_once(text, old_captured, new_captured, "point2 captured value narrowing")
-    source.write_text(text)
-
-    Path("phpstan.neon").write_text(
-        "includes:\n"
-        "    - vendor/larastan/larastan/extension.neon\n\n"
-        "parameters:\n"
-        "    level: max\n"
-        "    paths:\n"
-        "        - src\n"
-        "    tmpDir: .phpstan-cache\n"
-        "    reportUnmatchedIgnoredErrors: true\n"
-    )
-
-
-def point3() -> None:
-    source = Path("src/Analysis/SourceScanner.php")
-    text = source.read_text()
-    old = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n"
-    new = "        $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());\n        if ($this->transactions === []) {\n            return [];\n        }\n\n        $this->afterCommitCallbacks = $this->findAfterCommitCallbacks();\n"
-    source.write_text(replace_once(text, old, new, "point3 transaction fast path"))
-
-
-def point4() -> None:
-    baseline = Path("src/Analysis/Baseline.php")
-    text = baseline.read_text()
-    old = '''        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
-        if (! is_array($decoded)) {
-            return new self;
+        foreach ($this->matches('/->\s*notify\s*\(\s*(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/i') as $match) {
+            $offset = $match['offset'];
+            $tx = $this->eligibleTransaction($offset);
+            if ($tx === null) {
+                continue;
+            }
+            $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
+            $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
+            $statement = $this->statementAt($offset);
+            if ($metadata?->queued() === true && $this->jobDispatchIsAfterCommitSafe($statement, $metadata)) {
+                continue;
+            }
+            $this->appendFinding($findings, $offset, 'TG004', Severity::Error,
+                $class === null
+                    ? 'A variable notification payload may be delivered before the surrounding transaction commits.'
+                    : "Notification [{$this->basename($class)}] may be delivered before the surrounding database transaction commits.",
+                'Make queued delivery commit-aware or send the notification from DB::afterCommit()/after the transaction.',
+                $metadata === null ? 'medium' : 'high');
+            $this->appendRetryFinding($findings, $offset, $tx, 'notification delivery');
         }
 
-        $fingerprintValue = $decoded['fingerprints'] ?? null;
-        $fingerprints = is_array($fingerprintValue) ? $fingerprintValue : [];
-
-        return new self(array_values(array_filter($fingerprints, 'is_string')));
-'''
-    new = '''        $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
-        if (! is_array($decoded)) {
-            throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: expected a JSON object.");
+        foreach ($this->matches('/(?<![A-Za-z0-9_>])(?<!->)\\?broadcast\s*\(\s*(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)/i') as $match) {
+            $offset = $match['offset'];
+            $tx = $this->eligibleTransaction($offset);
+            if ($tx === null) {
+                continue;
+            }
+            $class = $this->localNewClassForVariable($offset, $this->captured($match, 'var'));
+            $metadata = $class !== null ? $this->classIndex->metadata($class) : null;
+            $statement = $this->statementAt($offset);
+            $broadcastNow = $metadata?->implements('Illuminate\\Contracts\\Broadcasting\\ShouldBroadcastNow') === true;
+            if (! $broadcastNow && $metadata?->explicitlyBeforeCommit() !== true
+                && ($metadata?->queueAfterCommit() === true || $this->queueConnectionDispatchesAfterCommit($statement, $metadata))) {
+                continue;
+            }
+            $this->appendFinding($findings, $offset, 'TG005', Severity::Error,
+                $class === null
+                    ? 'A variable broadcast payload may run before the surrounding database transaction commits.'
+                    : "Broadcast [{$this->basename($class)}] may run before the surrounding database transaction commits.",
+                'Use an explicit after-commit broadcast strategy or broadcast from DB::afterCommit().',
+                $metadata === null ? 'medium' : 'high');
+            $this->appendRetryFinding($findings, $offset, $tx, 'broadcast');
         }
+    }
 
-        $version = $decoded['version'] ?? null;
-        if ($version !== 1) {
-            throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: unsupported or missing version.");
-        }
-
-        $fingerprints = $decoded['fingerprints'] ?? null;
-        if (! is_array($fingerprints)) {
-            throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: fingerprints must be an array.");
-        }
-
-        foreach ($fingerprints as $fingerprint) {
-            if (! is_string($fingerprint) || $fingerprint === '') {
-                throw new \\RuntimeException("Invalid Transaction Guard baseline [{$path}]: every fingerprint must be a non-empty string.");
+    private function localNewClassForVariable(int $offset, string $variable): ?string
+    {
+        $scopeStart = 0;
+        $scopeSpan = PHP_INT_MAX;
+        foreach ($this->callables as $callable) {
+            if ($offset < $callable['start'] || $offset > $callable['end']) {
+                continue;
+            }
+            $span = $callable['end'] - $callable['start'];
+            if ($span < $scopeSpan) {
+                $scopeStart = $callable['start'];
+                $scopeSpan = $span;
             }
         }
 
-        return new self(array_values($fingerprints));
-'''
-    baseline.write_text(replace_once(text, old, new, "point4 baseline schema"))
+        $resolved = null;
+        $count = count($this->tokens);
+        for ($i = 0; $i < $count; $i++) {
+            $token = $this->tokens[$i];
+            if ($token['offset'] < $scopeStart || $token['offset'] >= $offset || $token['id'] !== T_VARIABLE || $token['text'] !== $variable) {
+                continue;
+            }
+            $assign = $this->nextSignificantToken($i + 1);
+            if ($assign === null || $this->tokens[$assign]['text'] !== '=') {
+                continue;
+            }
+            $value = $this->nextSignificantToken($assign + 1);
+            if ($value === null || $this->tokens[$value]['id'] !== T_NEW) {
+                $resolved = null;
+                continue;
+            }
+            $name = $this->nextSignificantToken($value + 1);
+            if ($name === null || ! in_array($this->tokens[$name]['id'], [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED], true)) {
+                $resolved = null;
+                continue;
+            }
+            $resolved = $this->context->resolve($this->tokens[$name]['text']);
+        }
 
-    tests = Path("tests/Unit/BaselineTest.php")
-    text = tests.read_text()
-    addition = '''
-
-it('rejects structurally invalid baselines', function (string $json): void {
-    $path = sys_get_temp_dir().'/invalid-transaction-guard-baseline-'.bin2hex(random_bytes(4)).'.json';
-
-    try {
-        file_put_contents($path, $json);
-        expect(fn () => Baseline::load($path))->toThrow(RuntimeException::class);
-    } finally {
-        @unlink($path);
+        return $resolved;
     }
-})->with([
-    'null root' => 'null',
-    'missing version' => '{"fingerprints":[]}',
-    'wrong version' => '{"version":2,"fingerprints":[]}',
-    'fingerprints not array' => '{"version":1,"fingerprints":"oops"}',
-    'non-string fingerprint' => '{"version":1,"fingerprints":[123]}',
-    'empty fingerprint' => '{"version":1,"fingerprints":[""]}',
-]);
+
+    private function nextSignificantToken(int $start): ?int
+    {
+        $count = count($this->tokens);
+        for ($i = $start; $i < $count; $i++) {
+            $id = $this->tokens[$i]['id'];
+            if ($id !== null && in_array($id, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+
+            return $i;
+        }
+
+        return null;
+    }
+
 '''
-    if "rejects structurally invalid baselines" in text:
-        raise SystemExit("point4 baseline regression test already present")
-    tests.write_text(text.rstrip() + addition)
+if marker not in text:
+    raise SystemExit("scanHttp marker missing")
+source.write_text(text.replace(marker, method + marker, 1))
 
+matrix = Path("tests/Support/ScenarioMatrix.php")
+text = matrix.read_text()
+marker = "    'global dispatch helper with unresolved class is conservatively reported' => [\n"
+scenarios = r'''    'locally assigned queued job variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Support\Facades\DB;
+class ProcessOrder implements ShouldQueue {}
+DB::transaction(function () { $job = new ProcessOrder(); dispatch($job); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'locally assigned non queueable job variable is synchronous' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Actions;
+use Illuminate\Support\Facades\DB;
+class RecalculateOrder {}
+DB::transaction(function () { $job = new RecalculateOrder(); dispatch($job); });
+PHP,
+        'rules' => ['TG016'],
+        'absent' => ['TG001'],
+    ],
+    'locally reassigned job variable is not trusted as original type' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Jobs;
+use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Support\Facades\DB;
+class SafeJob implements ShouldQueueAfterCommit {}
+DB::transaction(function () { $job = new SafeJob(); $job = make_job(); dispatch($job); });
+PHP,
+        'rules' => ['TG001'],
+    ],
+    'locally assigned event variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Support\Facades\DB;
+class OrderCreated {}
+DB::transaction(function () { $event = new OrderCreated(); event($event); });
+PHP,
+        'rules' => ['TG002'],
+    ],
+    'locally assigned notification variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Notifications;
+use Illuminate\Support\Facades\DB;
+class ReceiptReady {}
+DB::transaction(function () { $notification = new ReceiptReady(); $user->notify($notification); });
+PHP,
+        'rules' => ['TG004'],
+    ],
+    'locally assigned broadcast variable is detected' => [
+        'code' => <<<'PHP'
+<?php
+namespace App\Events;
+use Illuminate\Support\Facades\DB;
+class OrderChanged {}
+DB::transaction(function () { $event = new OrderChanged(); broadcast($event); });
+PHP,
+        'rules' => ['TG005'],
+    ],
+'''
+if marker not in text:
+    raise SystemExit("scenario marker missing")
+matrix.write_text(text.replace(marker, scenarios + marker, 1))
 
-POINTS = {
-    "audit/01-global-dispatch": point1,
-    "audit/02-phpstan-zero-ignores": point2,
-    "audit/03-fast-path": point3,
-    "audit/04-baseline-schema": point4,
-}
-
-if len(sys.argv) != 2 or sys.argv[1] not in POINTS:
-    raise SystemExit("unsupported audit branch")
-
-POINTS[sys.argv[1]]()
 Path(".audit-request").unlink(missing_ok=True)
+base = subprocess.run(["git", "show", "origin/main:.github/audit_writer.py"], check=True, capture_output=True, text=True).stdout
+Path(".github/audit_writer.py").write_text(base)
