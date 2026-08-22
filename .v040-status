@@ -1,3 +1,46 @@
+  - Downloading symfony/polyfill-php86 (v1.41.0)
+  - Downloading symfony/polyfill-php85 (v1.41.0)
+  - Downloading symfony/polyfill-php84 (v1.38.1)
+  - Downloading symfony/polyfill-intl-normalizer (v1.38.0)
+  - Downloading symfony/polyfill-intl-idn (v1.38.1)
+  - Downloading symfony/mime (v8.1.5)
+  - Downloading psr/container (2.0.2)
+  - Downloading symfony/service-contracts (v3.7.1)
+  - Downloading psr/event-dispatcher (1.0.0)
+  - Downloading symfony/event-dispatcher-contracts (v3.7.1)
+  - Downloading symfony/event-dispatcher (v8.1.5)
+  - Downloading egulias/email-validator (4.0.4)
+  - Downloading symfony/mailer (v8.1.5)
+  - Downloading symfony/error-handler (v8.1.5)
+  - Downloading symfony/http-kernel (v8.1.5)
+  - Downloading symfony/finder (v8.1.5)
+  - Downloading symfony/polyfill-intl-grapheme (v1.41.0)
+  - Downloading symfony/string (v8.1.2)
+  - Downloading symfony/console (v8.1.5)
+  - Downloading ramsey/collection (2.1.1)
+  - Downloading brick/math (0.18.0)
+  - Downloading ramsey/uuid (4.9.3)
+  - Downloading psr/simple-cache (3.0.0)
+  - Downloading nunomaduro/termwind (v2.4.0)
+  - Downloading symfony/translation-contracts (v3.7.1)
+  - Downloading symfony/translation (v8.1.5)
+  - Downloading psr/clock (1.0.0)
+  - Downloading symfony/clock (v8.1.0)
+  - Downloading carbonphp/carbon-doctrine-types (3.2.0)
+  - Downloading nesbot/carbon (3.13.2)
+  - Downloading monolog/monolog (3.10.0)
+  - Downloading league/uri-interfaces (7.8.1)
+  - Downloading league/uri (7.8.1)
+  - Downloading league/mime-type-detection (1.17.0)
+  - Downloading league/flysystem-local (3.35.3)
+  - Downloading league/flysystem (3.35.3)
+  - Downloading nette/utils (v4.1.5)
+  - Downloading nette/schema (v1.3.6)
+  - Downloading dflydev/dot-access-data (v3.0.3)
+  - Downloading league/config (v1.2.0)
+  - Downloading league/commonmark (2.10.0)
+  - Downloading laravel/serializable-closure (v2.0.15)
+  - Downloading laravel/prompts (v0.3.23)
   - Downloading laravel/framework (v13.26.1)
   - Downloading iamcal/sql-parser (v0.7)
   - Downloading larastan/larastan (v3.10.0)
@@ -220,81 +263,38 @@ Note: Using configuration file /home/runner/work/laravel-transaction-guard/larav
   0/20 [░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%
  20/20 [▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓] 100%
 
-::error file=src/Analysis/SourceScanner.php,line=798,col=0::Parameter #1 $class of method Codegenie\TransactionGuard\Analysis\SourceScanner::basename() expects string, string|null given.
-::error file=src/Analysis/SourceScanner.php,line=952,col=0::Parameter #1 $class of method Codegenie\TransactionGuard\Analysis\SourceScanner::basename() expects string, string|null given.
-::error file=src/Analysis/SourceScanner.php,line=1680,col=0::Offset 2 does not exist on array{Codegenie\TransactionGuard\Analysis\Severity, string|null}.
-::error file=src/Analysis/SourceScanner.php,line=1684,col=0::Parameter #8 $context of method Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding() expects array<string, bool|float|int|string|null>, array<string, mixed> given.
-::error file=src/Analysis/SourceScanner.php,line=1701,col=0::Offset 2 does not exist on array{Codegenie\TransactionGuard\Analysis\Severity, string|null}.
-::error file=src/Analysis/SourceScanner.php,line=1705,col=0::Parameter #8 $context of method Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding() expects array<string, bool|float|int|string|null>, array<string, mixed> given.
-::error file=src/Analysis/SourceScanner.php,line=2549,col=0::Method Codegenie\TransactionGuard\Analysis\SourceScanner::appendPendingDispatchLifecycleFindings() has parameter $tx with no value type specified in iterable type array.
-::error file=src/Analysis/SourceScanner.php,line=2558,col=0::Parameter #8 $context of method Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding() expects array<string, bool|float|int|string|null>, array<string, mixed> given.
-::error file=src/Analysis/SourceScanner.php,line=2565,col=0::Parameter #8 $context of method Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding() expects array<string, bool|float|int|string|null>, array<string, mixed> given.
-::error file=src/TransactionGuard.php,line=35,col=0::Strict comparison using === between array{} and array{} will always evaluate to true.
-::error file=src/TransactionGuard.php,line=41,col=0::Parameter #1 $array (array{}) to function array_values is empty, call has no effect.
- ------ ----------------------------------------------------------------------- 
-  Line   Analysis/SourceScanner.php                                             
- ------ ----------------------------------------------------------------------- 
-  798    Parameter #1 $class of method                                          
-         Codegenie\TransactionGuard\Analysis\SourceScanner::basename() expects  
-         string, string|null given.                                             
-         🪪  argument.type                                                      
-  952    Parameter #1 $class of method                                          
-         Codegenie\TransactionGuard\Analysis\SourceScanner::basename() expects  
-         string, string|null given.                                             
-         🪪  argument.type                                                      
-  1680   Offset 2 does not exist on                                             
-         array{Codegenie\TransactionGuard\Analysis\Severity, string|null}.      
-         🪪  offsetAccess.notFound                                              
-  1684   Parameter #8 $context of method                                        
-         Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding()     
-         expects array<string, bool|float|int|string|null>, array<string, mixe  
-         d> given.                                                              
-         🪪  argument.type                                                      
-  1701   Offset 2 does not exist on                                             
-         array{Codegenie\TransactionGuard\Analysis\Severity, string|null}.      
-         🪪  offsetAccess.notFound                                              
-  1705   Parameter #8 $context of method                                        
-         Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding()     
-         expects array<string, bool|float|int|string|null>, array<string, mixe  
-         d> given.                                                              
-         🪪  argument.type                                                      
-  2549   Method                                                                 
-         Codegenie\TransactionGuard\Analysis\SourceScanner::appendPendingDispa  
-         tchLifecycleFindings() has parameter $tx with no value type specified  
-         in iterable type array.                                                
-         🪪  missingType.iterableValue                                          
-         💡  See:                                                               
-         https://phpstan.org/blog/solving-phpstan-no-value-type-specified-in-i  
-         terable-type                                                           
-  2558   Parameter #8 $context of method                                        
-         Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding()     
-         expects array<string, bool|float|int|string|null>, array<string, mixe  
-         d> given.                                                              
-         🪪  argument.type                                                      
-  2565   Parameter #8 $context of method                                        
-         Codegenie\TransactionGuard\Analysis\SourceScanner::appendFinding()     
-         expects array<string, bool|float|int|string|null>, array<string, mixe  
-         d> given.                                                              
-         🪪  argument.type                                                      
- ------ ----------------------------------------------------------------------- 
 
- ------ ----------------------------------------------------------------------- 
-  Line   TransactionGuard.php                                                   
- ------ ----------------------------------------------------------------------- 
-  35     Strict comparison using === between array{} and array{} will always    
-         evaluate to true.                                                      
-         🪪  identical.alwaysTrue                                               
-         💡  If Codegenie\TransactionGuard\TransactionGuard::discoverPhpFiles()  
-         is impure, add @phpstan-impure PHPDoc tag above its declaration. Lear  
-         n more: https://phpstan.org/blog/remembering-and-forgetting-returned-  
-         values                                                                 
-  41     Parameter #1 $array (array{}) to function array_values is empty, call  
-         has no effect.                                                         
-         🪪  arrayValues.empty                                                  
- ------ ----------------------------------------------------------------------- 
+ [OK] No errors                                                                 
 
- [ERROR] Found 11 errors                                                        
+Rule documentation is synchronized.
+...........................FAIL: event class static dispatch is flagged
+  missing: TG002
+  actual: (none)
+................................................FAIL: DB unprepared DDL inside transaction is critical
+  missing: TG012
+  actual: (none)
+FAIL: DB statement ALTER inside transaction is critical
+  missing: TG012
+  actual: (none)
+..............................................................................FAIL: event static dispatchIf is flagged
+  missing: TG002
+  actual: (none)
+................................................FAIL: PostgreSQL DDL remains visible but is not classified as MySQL critical
+  missing: TG012
+  actual: (none)
+......................FAIL: incrementEach cross connection is detected
+  missing: TG021
+  actual: (none)
+FAIL: local model setConnection participates in TG021
+  missing: TG021
+  actual: (none)
+...FAIL: heredoc DDL is detected
+  missing: TG012
+  actual: (none)
 
-Script phpstan analyse --memory-limit=512M handling the analyse event returned with error code 1
-Script @analyse was called via check
+226 scenario(s) passed; 8 failed.
+.......
+233 total check(s) passed; 8 failed.
+Script @php tools/smoke.php handling the test:smoke event returned with error code 1
+Script @test:smoke was called via check
 Script @check was called via check:all
