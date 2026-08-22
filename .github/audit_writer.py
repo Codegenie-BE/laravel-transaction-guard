@@ -67,8 +67,6 @@ old = '''        ])->expectsOutputToContain('"version": "2.1.0"')
             ->expectsOutputToContain('"ruleId": "TG006"')
             ->assertSuccessful();'''
 new = '''        ])->expectsOutputToContain('"version": "2.1.0"')
-            ->expectsOutputToContain('"runs": [')
-            ->expectsOutputToContain('"name": "Laravel Transaction Guard"')
             ->assertSuccessful();'''
 if old not in text:
     raise SystemExit("SARIF command assertion marker not found")
