@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- `Bus::dispatch()` now follows Laravel's actual queued-vs-synchronous command semantics and honors indexed after-commit job metadata.
 - Source scanning pre-indexes lines/non-code ranges, caches repeated lookups, uses API-keyword fast paths and avoids repeated sort/filter work on transaction regions.
 - Baseline generation reuses the initial analysis result instead of scanning twice.
 - Disabled-rule checks use a precomputed lookup map instead of repeated linear scans on every finding.
