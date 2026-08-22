@@ -12,10 +12,10 @@ if old not in code:
     raise RuntimeError('v0.4 regex_once anchor not found')
 code = code.replace(old, new, 1)
 
-# Cache is replaced structurally below because its v0.3 implementation has
-# already evolved enough that an exact textual regex is deliberately brittle.
+# Cache and Redis are replaced structurally below because their v0.3 method
+# bodies have evolved enough that exact historical regex anchors are brittle.
 old_guard = "    if count != 1:\n        raise RuntimeError(f\"regex anchor in {path} matched {count}: {pattern[:120]!r}\")"
-new_guard = "    if count != 1:\n        if 'Cache' in pattern:\n            return\n        raise RuntimeError(f\"regex anchor in {path} matched {count}: {pattern[:120]!r}\")"
+new_guard = "    if count != 1:\n        if 'Cache' in pattern or '$commandPattern' in pattern:\n            return\n        raise RuntimeError(f\"regex anchor in {path} matched {count}: {pattern[:120]!r}\")"
 if old_guard not in code:
     raise RuntimeError('v0.4 regex guard anchor not found')
 code = code.replace(old_guard, new_guard, 1)
@@ -104,19 +104,101 @@ source, count = cache_pattern.subn(lambda _match: cache_replacement, source, cou
 if count != 1:
     raise RuntimeError(f'cache scanner fallback matched {count}')
 
-# Replace only the Redis mutation-catalog declaration inside scanRedis. The rest
-# of the Redis method (including command and callback semantics) comes from the
-# main deterministic patch above.
-redis_pos = source.find('private function scanRedis')
-if redis_pos < 0:
-    raise RuntimeError('scanRedis method not found')
-redis_tail = source[redis_pos:]
-mutating = re.search(r"\$mutating\s*=\s*'[^']+';", redis_tail)
-if mutating is None:
-    raise RuntimeError('Redis mutation catalog declaration not found')
-start = redis_pos + mutating.start()
-end = redis_pos + mutating.end()
-source = source[:start] + '$mutating = OperationCatalog::alternation(OperationCatalog::REDIS_MUTATIONS);' + source[end:]
+# Replace the complete Redis scanner. Known reads are ignored, known mutations
+# are reported, script/unknown commands remain conservative, and inline
+# pipeline/transaction callbacks are inspected instead of flagging the wrapper.
+redis_pattern = re.compile(r"    /\*\* @param list<Finding> \$findings \*/\n    private function scanRedis\(array &\$findings\): void\n    \{.*?\n    \}\n(?:\n    /\*\* @return array\{bool,bool\} mutates, unknown \*/\n    private function redisCallbackMutationState\(string \$statement\): array\n    \{.*?\n    \}\n)?\n    /\*\* @param  list<Finding>  \$findings \*/\n    private function scanProcesses", re.S)
+redis_replacement = r'''    /** @param list<Finding> $findings */
+    private function scanRedis(array &$findings): void
+    {
+        if (! $this->sourceContainsAny(['redis'])) {
+            return;
+        }
+
+        $mutating = OperationCatalog::alternation(OperationCatalog::REDIS_MUTATIONS);
+
+        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Redis', 'Redis') as $alias) {
+            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::(?:(?!;).)*?\b(?P<method>'.$mutating.')\s*\(/is';
+            foreach ($this->matches($pattern) as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+
+                $method = strtolower($this->captured($match, 'method'));
+                $severity = $method === 'publish' ? Severity::Error : Severity::Warning;
+                $this->appendFinding($findings, $offset, 'TG020', $severity,
+                    "Redis::{$method}() mutates non-transactional state while a database transaction is open.",
+                    'Move the Redis mutation after commit, or use an idempotent/outbox strategy when both systems must remain consistent.', 'high');
+                $this->appendRetryFinding($findings, $offset, $tx, "Redis {$method}");
+            }
+
+            $commandPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*command\s*\(\s*[\'\"](?P<command>[A-Za-z0-9_]+)[\'\"]/i';
+            foreach ($this->matches($commandPattern, ['command']) as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+
+                $command = strtoupper($this->captured($match, 'command'));
+                $kind = OperationCatalog::redisCommandKind($command);
+                if ($kind === 'read') {
+                    continue;
+                }
+
+                $severity = $command === 'PUBLISH' ? Severity::Error : Severity::Warning;
+                $this->appendFinding($findings, $offset, 'TG020', $severity,
+                    $kind === 'mutation'
+                        ? "Redis command {$command} mutates non-transactional state while a database transaction is open."
+                        : "Redis command {$command} cannot be proven read-only while a database transaction is open.",
+                    'Move Redis mutations after commit; review unknown/script commands explicitly.',
+                    $kind === 'mutation' ? 'high' : 'medium');
+                $this->appendRetryFinding($findings, $offset, $tx, "Redis {$command}");
+            }
+
+            foreach ($this->matches('/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>pipeline|transaction)\s*\(/i') as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+
+                [$mutates, $unknown] = $this->redisCallbackMutationState($this->statementAt($offset));
+                if (! $mutates && ! $unknown) {
+                    continue;
+                }
+
+                $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                    $mutates
+                        ? 'A Redis pipeline/transaction callback mutates Redis while a database transaction is open.'
+                        : 'A Redis pipeline/transaction callback cannot be proven read-only while a database transaction is open.',
+                    'Keep Redis callback mutations after the database commit.', $mutates ? 'high' : 'medium');
+                $this->appendRetryFinding($findings, $offset, $tx, 'Redis callback mutation');
+            }
+        }
+    }
+
+    /** @return array{bool,bool} mutates, unknown */
+    private function redisCallbackMutationState(string $statement): array
+    {
+        $code = $this->codeOnlyFragment($statement);
+        $mutations = OperationCatalog::alternation(OperationCatalog::REDIS_MUTATIONS);
+        if (preg_match('/->\s*(?:'.$mutations.')\s*\(/i', $code) === 1) {
+            return [true, false];
+        }
+
+        $hasInlineCallable = preg_match('/(?:pipeline|transaction)\s*\(\s*(?:static\s+)?(?:function|fn)\b/i', $code) === 1;
+
+        return [false, ! $hasInlineCallable];
+    }
+
+    /** @param  list<Finding>  $findings */
+    private function scanProcesses'''
+source, count = redis_pattern.subn(lambda _match: redis_replacement, source, count=1)
+if count != 1:
+    raise RuntimeError(f'Redis scanner fallback matched {count}')
 
 scanner.write_text(source)
 Path(__file__).unlink()
