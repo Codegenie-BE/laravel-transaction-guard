@@ -34,7 +34,7 @@ final class SourceIndex
             }
         }
 
-        $ignored = [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE];
+        $ignored = [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE, T_INLINE_HTML];
         foreach ($tokens as $token) {
             if ($token['id'] !== null && in_array($token['id'], $ignored, true)) {
                 $this->nonCodeRanges[] = ['start' => $token['offset'], 'end' => $token['end']];
@@ -65,6 +65,14 @@ final class SourceIndex
     public function line(int $number): string
     {
         return $this->lines[$number - 1] ?? '';
+    }
+
+    public function columnAt(int $offset): int
+    {
+        $line = $this->lineAt($offset);
+        $start = $this->lineStarts[$line - 1] ?? 0;
+
+        return max(1, $offset - $start + 1);
     }
 
     public function isNonCode(int $offset): bool

@@ -43,6 +43,9 @@ final class SourceScanner
     /** @var list<Finding> */
     private array $preScanFindings = [];
 
+    /** @var array<string, true> */
+    private array $regexErrors = [];
+
     private string $source = '';
 
     private string $file = '';
@@ -68,6 +71,7 @@ final class SourceScanner
                 snippet: '',
                 remediation: 'Check file permissions and retry the analysis.',
                 confidence: 'high',
+                projectRoot: $this->config->projectRoot,
             )];
         }
 
@@ -88,6 +92,7 @@ final class SourceScanner
                 snippet: '',
                 remediation: 'Fix the PHP syntax error before running Transaction Guard.',
                 confidence: 'high',
+                projectRoot: $this->config->projectRoot,
             )];
         }
 
@@ -97,6 +102,7 @@ final class SourceScanner
         $this->statementCodeCache = [];
         $this->facadeAliasCache = [];
         $this->preScanFindings = [];
+        $this->regexErrors = [];
 
         $this->callables = $this->findCallableRegions();
         $this->transactions = array_merge($this->findClosureTransactions(), $this->findManualTransactions());
@@ -307,7 +313,7 @@ final class SourceScanner
                 continue;
             }
 
-            $resolved = $this->context->resolve($this->captured($match, 'class'));
+            $resolved = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
             $metadata = $this->classIndex->metadata($resolved);
 
             if ($this->statementContainsBeforeCommit($statement)) {
@@ -603,7 +609,7 @@ final class SourceScanner
                 if ($tx === null) {
                     continue;
                 }
-                $class = $this->context->resolve($this->captured($match, 'class'));
+                $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
                 $metadata = $this->classIndex->metadata($class);
                 if ($metadata?->eventAfterCommit() === true) {
                     continue;
@@ -623,7 +629,7 @@ final class SourceScanner
             if ($tx === null) {
                 continue;
             }
-            $class = $this->context->resolve($this->captured($match, 'class'));
+            $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
             $metadata = $this->classIndex->metadata($class);
             $looksLikeEvent = $metadata?->eventAfterCommit() === true || str_contains(strtolower($class), '\\events\\');
             if (! $looksLikeEvent || $metadata?->eventAfterCommit() === true) {
@@ -696,7 +702,7 @@ final class SourceScanner
                 }
                 $statement = $this->statementAt($offset);
                 $method = strtolower($this->captured($match, 'method'));
-                $class = $this->context->resolve($this->captured($match, 'class'));
+                $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
                 $metadata = $this->classIndex->metadata($class);
                 $queued = ! in_array($method, ['notifynow', 'sendnow'], true) && $metadata?->queued() === true;
 
@@ -733,7 +739,7 @@ final class SourceScanner
                 if ($tx === null) {
                     continue;
                 }
-                $class = $this->context->resolve($this->captured($match, 'class'));
+                $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
                 $metadata = $this->classIndex->metadata($class);
                 $statement = $this->statementAt($offset);
                 $broadcastNow = $metadata?->implements('Illuminate\\Contracts\\Broadcasting\\ShouldBroadcastNow') === true;
@@ -878,6 +884,7 @@ final class SourceScanner
         }
 
         $resolved = null;
+        $assignments = 0;
         $count = count($this->tokens);
         for ($i = 0; $i < $count; $i++) {
             $token = $this->tokens[$i];
@@ -888,6 +895,10 @@ final class SourceScanner
             $assign = $this->nextSignificantToken($i + 1);
             if ($assign === null || $this->tokens[$assign]['text'] !== '=') {
                 continue;
+            }
+            $assignments++;
+            if ($assignments > 1 || $this->conditionalControlScopeAt($token['offset']) !== null) {
+                return null;
             }
 
             $value = $this->nextSignificantToken($assign + 1);
@@ -1038,6 +1049,7 @@ final class SourceScanner
     {
         $scope = $this->callableScopeAt($offset);
         $resolved = null;
+        $assignments = 0;
         $count = count($this->tokens);
         $facades = [
             'http' => ['Illuminate\\Support\\Facades\\Http', 'Http'],
@@ -1059,6 +1071,10 @@ final class SourceScanner
             $assign = $this->nextSignificantToken($i + 1);
             if ($assign === null || $this->tokens[$assign]['text'] !== '=') {
                 continue;
+            }
+            $assignments++;
+            if ($assignments > 1 || $this->conditionalControlScopeAt($token['offset']) !== null) {
+                return null;
             }
 
             $raw = $this->statementAt($token['offset']);
@@ -1177,6 +1193,9 @@ final class SourceScanner
 
         foreach ($this->matches('/\b(?P<fn>file_put_contents|unlink|rename|mkdir|rmdir|copy|touch|chmod|symlink|link)\s*\(/i') as $match) {
             $offset = $match['offset'];
+            if (! $this->isGlobalFunctionCall($offset)) {
+                continue;
+            }
             $tx = $this->eligibleTransaction($offset);
             if ($tx === null) {
                 continue;
@@ -1278,6 +1297,9 @@ final class SourceScanner
 
         foreach ($this->matches('/\b(?P<fn>exec|shell_exec|system|passthru|proc_open)\s*\(/i') as $match) {
             $offset = $match['offset'];
+            if (! $this->isGlobalFunctionCall($offset)) {
+                continue;
+            }
             $tx = $this->eligibleTransaction($offset);
             if ($tx === null) {
                 continue;
@@ -1312,6 +1334,9 @@ final class SourceScanner
 
         foreach ($this->matches('/(?<![A-Za-z0-9_])defer\s*\(/i') as $match) {
             $offset = $match['offset'];
+            if (! $this->isGlobalFunctionCall($offset)) {
+                continue;
+            }
             $tx = $this->eligibleTransaction($offset);
             if ($tx === null) {
                 continue;
@@ -1367,13 +1392,13 @@ final class SourceScanner
     /** @param list<Finding> $findings */
     private function scanEloquentCrossConnectionWrites(array &$findings): void
     {
-        $methods = 'create|forceCreate|updateOrCreate|firstOrCreate|upsert|insert|insertOrIgnore|update|delete|destroy|truncate|increment|decrement';
+        $methods = 'create|forceCreate|updateOrCreate|firstOrCreate|upsert|insert|insertOrIgnore|update|delete|destroy|truncate|increment|decrement|forceDelete|restore';
         foreach ($this->matches('/(?<![A-Za-z0-9_\\\\])(?P<class>\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::(?:(?![;{}]).)*?\b(?P<method>'.$methods.')\s*\(/is') as $match) {
             $offset = $match['offset'];
             if ($this->eligibleTransaction($offset) === null) {
                 continue;
             }
-            $class = $this->context->resolve($this->captured($match, 'class'));
+            $class = $this->classIndex->contextFor($this->file, $match['offset'])->resolve($this->captured($match, 'class'));
             if (! $this->classIndex->isEloquentModel($class)) {
                 continue;
             }
@@ -1381,7 +1406,7 @@ final class SourceScanner
             $this->reportCrossConnectionWrite($findings, $offset, $connection);
         }
 
-        foreach ($this->matches('/(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)\s*->\s*(?P<method>save|delete|increment|decrement)\s*\(/i') as $match) {
+        foreach ($this->matches('/(?P<var>\$[A-Za-z_][A-Za-z0-9_]*)\s*->\s*(?P<method>save|saveQuietly|update|updateQuietly|delete|deleteQuietly|forceDelete|forceDeleteQuietly|restore|restoreQuietly|touch|touchQuietly|push|pushQuietly|increment|decrement)\s*\(/i') as $match) {
             $offset = $match['offset'];
             if ($this->eligibleTransaction($offset) === null) {
                 continue;
@@ -1467,8 +1492,7 @@ final class SourceScanner
     /** @param list<Finding> $findings */
     private function scanCustomPatterns(array &$findings): void
     {
-        foreach ($this->config->customSideEffectPatterns as $pattern) {
-            $regex = str_starts_with($pattern, '/') ? $pattern : '/'.str_replace('/', '\\/', $pattern).'/';
+        foreach ($this->config->customRegexes() as $regex) {
             foreach ($this->matches($regex) as $match) {
                 $offset = $match['offset'];
                 $tx = $this->eligibleTransaction($offset);
@@ -1502,7 +1526,7 @@ final class SourceScanner
             }
 
             $start = end($stacks[$key]);
-            if (! $this->manualTerminalCloses($start, $call)) {
+            if (! $this->manualTerminalCloses($start, $call) || $this->manualRegionHasEarlyExit($start, $call)) {
                 continue;
             }
 
@@ -1956,6 +1980,7 @@ final class SourceScanner
     {
         $scope = $this->callableScopeAt($offset);
         $resolved = null;
+        $assignments = 0;
         $count = count($this->tokens);
 
         for ($i = 0; $i < $count; $i++) {
@@ -1970,6 +1995,10 @@ final class SourceScanner
             $assign = $this->nextSignificantToken($i + 1);
             if ($assign === null || $this->tokens[$assign]['text'] !== '=') {
                 continue;
+            }
+            $assignments++;
+            if ($assignments > 1 || $this->conditionalControlScopeAt($token['offset']) !== null) {
+                return null;
             }
 
             $value = $this->nextSignificantToken($assign + 1);
@@ -2071,13 +2100,35 @@ final class SourceScanner
     {
         $result = [];
         $ok = @preg_match_all($pattern, $this->source, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
-        if ($ok === false || $ok === 0) {
+        if ($ok === false) {
+            $key = hash('sha256', $pattern.'|'.preg_last_error_msg());
+            if (! isset($this->regexErrors[$key])) {
+                $this->regexErrors[$key] = true;
+                $this->preScanFindings[] = new Finding(
+                    rule: 'TG902',
+                    severity: Severity::Error,
+                    message: 'Analyzer regular expression failed: '.preg_last_error_msg(),
+                    file: $this->file,
+                    line: 1,
+                    snippet: '',
+                    remediation: 'Report this analyzer failure; analysis results for this file may be incomplete.',
+                    confidence: 'high',
+                    projectRoot: $this->config->projectRoot,
+                );
+            }
+
+            return [];
+        }
+        if ($ok === 0) {
             return [];
         }
 
         foreach ($matches as $match) {
             $offset = $match[0][1];
             if ($this->offsetIsNonCode($offset) || $this->semanticCaptureIsNonCode($match, $allowNonCodeCaptures)) {
+                continue;
+            }
+            if (! $this->capturedMethodIsTopLevel($match)) {
                 continue;
             }
             $result[] = ['offset' => $offset, 'matches' => $match];
@@ -2118,9 +2169,10 @@ final class SourceScanner
         return $this->sourceIndex->isNonCode($offset);
     }
 
-    /** @param array{matches:array<int|string,mixed>} $match */
+    /** @param array{offset:int,matches:array<int|string,mixed>} $match */
     private function captured(array $match, string $name): string
     {
+        $this->context = $this->classIndex->contextFor($this->file, $match['offset']);
         $value = $match['matches'][$name] ?? '';
         if (is_array($value)) {
             $captured = $value[0] ?? '';
@@ -2509,14 +2561,15 @@ final class SourceScanner
 
         $normalized = ltrim($fqcn, '\\');
         $aliases = ['\\'.$normalized];
-        $fallbackImport = $this->context->imports[$fallback] ?? null;
-        if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
-            $aliases[] = $fallback;
-        }
-
-        foreach ($this->context->imports as $alias => $import) {
-            if (strcasecmp(ltrim($import, '\\'), $normalized) === 0) {
-                $aliases[] = $alias;
+        foreach ($this->classIndex->contextsFor($this->file) as $context) {
+            $fallbackImport = $context->imports[$fallback] ?? null;
+            if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
+                $aliases[] = $fallback;
+            }
+            foreach ($context->imports as $alias => $import) {
+                if (strcasecmp(ltrim($import, '\\'), $normalized) === 0) {
+                    $aliases[] = $alias;
+                }
             }
         }
 
@@ -2559,6 +2612,9 @@ final class SourceScanner
             remediation: $remediation,
             confidence: $confidence,
             context: $context,
+            column: $this->sourceIndex->columnAt($offset),
+            endColumn: $this->sourceIndex->columnAt($offset) + max(0, strlen($this->capturedTokenTextAt($offset)) - 1),
+            projectRoot: $this->config->projectRoot,
         );
     }
 
@@ -2673,6 +2729,95 @@ final class SourceScanner
         }
 
         return in_array(strtoupper($rule), preg_split('/[,\s]+/', strtoupper($rules)) ?: [], true);
+    }
+
+    private function isGlobalFunctionCall(int $offset): bool
+    {
+        $index = $this->tokenIndexContainingOrAfterOffset($offset);
+        if ($index === null) {
+            return false;
+        }
+        $previous = $this->previousSignificantToken($index - 1);
+        if ($previous === null) {
+            return true;
+        }
+
+        return ! in_array($this->tokens[$previous]['id'], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION], true);
+    }
+
+    /** @param array<int|string, mixed> $match */
+    private function capturedMethodIsTopLevel(array $match): bool
+    {
+        $capture = $match['method'] ?? null;
+        if (! is_array($capture) || ! isset($capture[1]) || ! is_int($capture[1]) || $capture[1] < 0) {
+            return true;
+        }
+        $full = $match[0] ?? null;
+        if (! is_array($full) || ! isset($full[0], $full[1]) || ! is_string($full[0]) || ! is_int($full[1])) {
+            return true;
+        }
+        $prefixLength = $capture[1] - $full[1];
+        if ($prefixLength <= 0) {
+            return true;
+        }
+        $prefix = substr($full[0], 0, $prefixLength);
+        if (! str_contains($prefix, '::')) {
+            return true;
+        }
+
+        $paren = $bracket = $brace = 0;
+        foreach (token_get_all('<?php '.$prefix) as $token) {
+            if (is_array($token)) {
+                continue;
+            }
+            if ($token === '(') {
+                $paren++;
+            } elseif ($token === ')') {
+                $paren--;
+            } elseif ($token === '[') {
+                $bracket++;
+            } elseif ($token === ']') {
+                $bracket--;
+            } elseif ($token === '{') {
+                $brace++;
+            } elseif ($token === '}') {
+                $brace--;
+            }
+        }
+
+        return $paren === 0 && $bracket === 0 && $brace === 0;
+    }
+
+    /**
+     * @param  DatabaseControlCall  $start
+     * @param  DatabaseControlCall  $terminal
+     */
+    private function manualRegionHasEarlyExit(array $start, array $terminal): bool
+    {
+        $hasCatchOrFinally = false;
+        foreach ($this->tokens as $token) {
+            if ($token['offset'] <= $start['end'] || $token['offset'] >= $terminal['offset']) {
+                continue;
+            }
+            if (in_array($token['id'], [T_CATCH, T_FINALLY], true)) {
+                $hasCatchOrFinally = true;
+            }
+            if (in_array($token['id'], [T_RETURN, T_EXIT], true)) {
+                return true;
+            }
+            if ($token['id'] === T_THROW && ! $hasCatchOrFinally) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function capturedTokenTextAt(int $offset): string
+    {
+        $index = $this->tokenIndexContainingOrAfterOffset($offset);
+
+        return $index === null ? '' : $this->tokens[$index]['text'];
     }
 
     private function statementAt(int $offset): string

@@ -7,6 +7,7 @@ namespace Codegenie\TransactionGuard\Console;
 use Codegenie\TransactionGuard\Analysis\AnalysisConfig;
 use Codegenie\TransactionGuard\Analysis\Baseline;
 use Codegenie\TransactionGuard\Analysis\Finding;
+use Codegenie\TransactionGuard\Analysis\RuleCatalog;
 use Codegenie\TransactionGuard\Analysis\Severity;
 use Codegenie\TransactionGuard\TransactionGuard;
 use Illuminate\Console\Command;
@@ -19,12 +20,29 @@ final class TransactionGuardCommand extends Command
         {--fail-on= : Minimum severity that fails the command: info, warning, error, critical, never}
         {--baseline= : Baseline path; defaults to the configured baseline}
         {--no-baseline : Ignore the baseline}
-        {--generate-baseline : Write all current findings to the baseline and exit successfully}';
+        {--generate-baseline : Write all current findings to the baseline and exit successfully}
+        {--explain= : Explain one rule ID and exit}';
 
     protected $description = 'Detect unsafe side effects that can escape Laravel database transaction boundaries.';
 
     public function handle(): int
     {
+        $explain = $this->option('explain');
+        if (is_string($explain) && $explain !== '') {
+            $rule = strtoupper($explain);
+            if (! RuleCatalog::exists($rule)) {
+                $this->error("Unknown Transaction Guard rule [{$rule}].");
+
+                return self::INVALID;
+            }
+            $definition = RuleCatalog::definition($rule);
+            $this->line($rule.' — '.$definition['title']);
+            $this->line($definition['description']);
+            $this->line(RuleCatalog::helpUri($rule));
+
+            return self::SUCCESS;
+        }
+
         $formatOption = $this->option('format');
         $format = is_string($formatOption) ? strtolower($formatOption) : 'console';
         if (! in_array($format, ['console', 'json', 'github', 'sarif'], true)) {
@@ -50,6 +68,8 @@ final class TransactionGuardCommand extends Command
                 detectReadHttpCalls: (bool) config('transaction-guard.detect_read_http_calls', false),
                 defaultDatabaseConnection: $this->stringConfig('database.default', '@default'),
                 databaseDriverByConnection: $this->databaseDriverMap(),
+                allowEmptyScan: (bool) config('transaction-guard.allow_empty_scan', false),
+                projectRoot: base_path(),
             );
 
             $guard = new TransactionGuard($analysisConfig);
@@ -69,6 +89,12 @@ final class TransactionGuardCommand extends Command
         }
 
         if ((bool) $this->option('generate-baseline')) {
+            if ($result->hasDiagnostics()) {
+                $this->render($format, $result->all(), $result->filesAnalyzed);
+                $this->error('Baseline was not generated because analyzer diagnostics must be fixed first.');
+
+                return self::FAILURE;
+            }
             try {
                 Baseline::write($baselinePath, $result->findings);
             } catch (\JsonException|\RuntimeException $exception) {
@@ -82,7 +108,7 @@ final class TransactionGuardCommand extends Command
             return self::SUCCESS;
         }
 
-        $this->render($format, $result->findings, $result->filesAnalyzed);
+        $this->render($format, $result->all(), $result->filesAnalyzed);
 
         $failOnOption = $this->option('fail-on');
         $failOn = strtolower(
@@ -90,6 +116,9 @@ final class TransactionGuardCommand extends Command
                 ? $failOnOption
                 : $this->stringConfig('transaction-guard.fail_on', 'warning'),
         );
+        if ($result->hasDiagnostics()) {
+            return self::FAILURE;
+        }
         if ($failOn === 'never') {
             return self::SUCCESS;
         }
@@ -173,7 +202,8 @@ final class TransactionGuardCommand extends Command
                 $level = $finding->severity->value >= Severity::Error->value ? 'error' : 'warning';
                 $message = $this->escapeGithubCommandValue("{$finding->rule}: {$finding->message}");
                 $file = $this->escapeGithubCommandValue($this->relativePath($finding->file));
-                $this->line(sprintf('::%s file=%s,line=%d::%s', $level, $file, $finding->line, $message));
+                $column = $finding->column !== null ? ',col='.$finding->column : '';
+                $this->line(sprintf('::%s file=%s,line=%d%s::%s', $level, $file, $finding->line, $column, $message));
             }
 
             return;
@@ -210,10 +240,12 @@ final class TransactionGuardCommand extends Command
         $results = [];
 
         foreach ($findings as $finding) {
+            $definition = RuleCatalog::definition($finding->rule);
             $rules[$finding->rule] ??= [
                 'id' => $finding->rule,
-                'name' => $finding->rule,
-                'shortDescription' => ['text' => $finding->message],
+                'name' => $definition['title'],
+                'shortDescription' => ['text' => $definition['description']],
+                'helpUri' => RuleCatalog::helpUri($finding->rule),
                 'help' => ['text' => $finding->remediation],
             ];
             $results[] = [
@@ -223,7 +255,11 @@ final class TransactionGuardCommand extends Command
                 'locations' => [[
                     'physicalLocation' => [
                         'artifactLocation' => ['uri' => $this->relativePath($finding->file)],
-                        'region' => ['startLine' => $finding->line],
+                        'region' => array_filter([
+                            'startLine' => $finding->line,
+                            'startColumn' => $finding->column,
+                            'endColumn' => $finding->endColumn,
+                        ], static fn (mixed $value): bool => $value !== null),
                     ],
                 ]],
                 'partialFingerprints' => ['transactionGuardFingerprint' => $finding->fingerprint()],

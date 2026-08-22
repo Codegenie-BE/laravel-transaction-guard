@@ -1,5 +1,9 @@
 # Transaction-safety analysis
 
+## Analyzer diagnostics are never suppressible by baselines
+
+TG900/TG901/TG902 represent analyzer integrity failures, not accepted application debt. They are always reported, are never written to baselines, and keep a non-zero exit status even when `fail_on=never`.
+
 ## Problem model
 
 A SQL transaction only provides atomicity for state managed by that database transaction. Laravel code can still cross a non-transactional boundary while the SQL transaction is open. That creates four distinct failure classes.

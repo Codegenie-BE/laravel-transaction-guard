@@ -9,6 +9,9 @@ final readonly class AnalysisConfig
     /** @var array<string, true> */
     private array $disabledRuleLookup;
 
+    /** @var list<string> */
+    private array $compiledCustomSideEffectPatterns;
+
     /**
      * @param  array<string, bool>  $queueAfterCommitByConnection
      * @param  list<string>  $customSideEffectPatterns
@@ -23,8 +26,22 @@ final readonly class AnalysisConfig
         public bool $detectReadHttpCalls = false,
         public string $defaultDatabaseConnection = '@default',
         public array $databaseDriverByConnection = [],
+        public bool $allowEmptyScan = false,
+        public string $projectRoot = '',
     ) {
-        $this->disabledRuleLookup = array_fill_keys($this->disabledRules, true);
+        $normalizedDisabled = [];
+        foreach ($this->disabledRules as $rule) {
+            $rule = strtoupper(trim($rule));
+            if (! RuleCatalog::exists($rule)) {
+                throw new \InvalidArgumentException("Unknown Transaction Guard rule [{$rule}] in disabled_rules.");
+            }
+            if (RuleCatalog::isDiagnostic($rule)) {
+                throw new \InvalidArgumentException("Analyzer diagnostic [{$rule}] cannot be disabled.");
+            }
+            $normalizedDisabled[$rule] = true;
+        }
+        $this->disabledRuleLookup = $normalizedDisabled;
+        $compiledCustomSideEffectPatterns = [];
 
         foreach ($this->customSideEffectPatterns as $pattern) {
             $regex = str_starts_with($pattern, '/') ? $pattern : '/'.str_replace('/', '\\/', $pattern).'/';
@@ -38,12 +55,21 @@ final readonly class AnalysisConfig
             if (! $valid) {
                 throw new \InvalidArgumentException("Invalid custom side-effect regular expression [{$pattern}].");
             }
+            $compiledCustomSideEffectPatterns[] = $regex;
         }
+
+        $this->compiledCustomSideEffectPatterns = $compiledCustomSideEffectPatterns;
+    }
+
+    /** @return list<string> */
+    public function customRegexes(): array
+    {
+        return $this->compiledCustomSideEffectPatterns;
     }
 
     public function ruleEnabled(string $rule): bool
     {
-        return ! isset($this->disabledRuleLookup[$rule]);
+        return RuleCatalog::isDiagnostic($rule) || ! isset($this->disabledRuleLookup[strtoupper($rule)]);
     }
 
     public function queueDispatchesAfterCommit(?string $connection = null): bool

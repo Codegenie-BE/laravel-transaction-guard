@@ -21,7 +21,7 @@ Why this design:
 - Laravel idioms such as facade aliases and interfaces can be indexed without executing code;
 - install footprint stays small.
 
-The analyzer builds a lightweight class metadata index for imports, inheritance, implemented interfaces, constructor `afterCommit()` / `beforeCommit()` intent, literal job queue connections, and literal Laravel 13 `Queue::route()` connection rules. It then maps transaction regions and examines only effects that lexically execute inside those regions.
+The analyzer builds a lightweight class metadata index for imports, inheritance, implemented interfaces, constructor `afterCommit()` / `beforeCommit()` intent, literal job queue connections, and Laravel 13 queue routing. `FileContextMap` keeps namespace/import resolution offset-aware for multi-namespace and bracketed-namespace files, while `SourceIndex` owns source-location/non-code lookups. The scanner then maps transaction regions and examines only effects that lexically execute inside those regions.
 
 ## False-positive controls
 
@@ -37,7 +37,7 @@ The analyzer builds a lightweight class metadata index for imports, inheritance,
 
 ## Non-goals
 
-- Full interprocedural data-flow analysis.
+- Full interprocedural data-flow analysis. Local inference is deliberately conservative when multiple/conditional reaching assignments are visible.
 - Executing or reflecting user code.
 - Automatically rewriting business logic.
 - Replacing PHPStan/Larastan.

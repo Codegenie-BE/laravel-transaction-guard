@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0] - 2026-08-22
+
+### Added
+
+- Canonical rule catalog with rule explanation/help links and documentation consistency checks.
+- Non-baselineable analyzer diagnostics, including TG902 for PCRE execution failures.
+- Lazy Composer class-file metadata resolution for framework/vendor parent classes.
+- Backed-enum resolution for statically known Laravel queue/database connection metadata.
+- Source columns in JSON, GitHub annotations and SARIF output.
+- Focused v0.3 hardening scenario module and broader Eloquent mutation coverage.
+
+### Changed
+
+- Parse/read/analyzer failures always fail CI, including with `--fail-on=never`, and prevent baseline generation.
+- Local variable inference is conservative across multiple or conditional assignments.
+- Global function detection no longer confuses object methods such as `->exec()`, `->touch()` and `->defer()`.
+- Dynamic notification `viaConnections()` results no longer count as proof of commit safety.
+- Manual transaction balance accounts for statically visible early exits.
+- Empty/missing scan paths fail explicitly by default.
+- Baseline output is deterministic and fingerprints are rooted at the configured project path.
+- Benchmarks now cover larger transaction-free, safe, side-effect-heavy and metadata-heavy workloads.
+
 ## [Unreleased]
 
 ## [v0.2.0] - 2026-08-22

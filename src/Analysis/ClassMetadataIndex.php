@@ -12,7 +12,7 @@ final class ClassMetadataIndex
     /** @var array<string, ClassMetadata> */
     private array $classes = [];
 
-    /** @var array<string, FileContext> */
+    /** @var array<string, FileContextMap> */
     private array $contexts = [];
 
     /** @var array<string, string> Known connection name or @dynamic when a route connection is not statically resolvable. */
@@ -29,6 +29,15 @@ final class ClassMetadataIndex
 
     /** @var array<string, list<string>> */
     private array $interfaceParents = [];
+
+    /** @var array<string, true> */
+    private array $indexedFiles = [];
+
+    /** @var array<string, true> */
+    private array $indexingClasses = [];
+
+    /** @var array<string, string> */
+    private array $enumCaseValues = [];
 
     /** @param  list<string>  $files */
     public static function fromFiles(array $files): self
@@ -47,12 +56,25 @@ final class ClassMetadataIndex
 
     public function metadata(string $class): ?ClassMetadata
     {
-        return $this->classes[strtolower(ltrim($class, '\\'))] ?? null;
+        $key = strtolower(ltrim($class, '\\'));
+        if (! isset($this->classes[$key])) {
+            $this->ensureClassIndexed($class);
+        }
+
+        return $this->classes[$key] ?? null;
     }
 
-    public function contextFor(string $file): FileContext
+    public function contextFor(string $file, int $offset = 0): FileContext
     {
-        return $this->contexts[$file] ?? new FileContext('', []);
+        return isset($this->contexts[$file])
+            ? $this->contexts[$file]->at($offset)
+            : new FileContext('', []);
+    }
+
+    /** @return list<FileContext> */
+    public function contextsFor(string $file): array
+    {
+        return isset($this->contexts[$file]) ? $this->contexts[$file]->contexts() : [new FileContext('', [])];
     }
 
     public function queueConnection(string $class, ?string $instanceConnection = null): ?string
@@ -198,25 +220,32 @@ final class ClassMetadataIndex
 
     public function indexFile(string $file): void
     {
+        $real = realpath($file) ?: $file;
+        if (isset($this->indexedFiles[$real])) {
+            return;
+        }
+        $this->indexedFiles[$real] = true;
+
         $source = @file_get_contents($file);
         if ($source === false) {
             return;
         }
 
         $tokens = $this->tokens($source);
-        $context = $this->parseContext($tokens);
-        $this->contexts[$file] = $context;
+        $contexts = FileContextMap::fromTokens($tokens, strlen($source));
+        $this->contexts[$file] = $contexts;
 
-        $this->indexInterfaceDeclarations($tokens, $context);
-        $this->indexQueueRoutes($source, $tokens, $context);
-        $this->indexQueueForwards($source, $tokens, $context);
-        $this->indexClassAndTraitDeclarations($source, $tokens, $context);
+        $this->indexInterfaceDeclarations($tokens, $contexts);
+        $this->indexEnumDeclarations($tokens, $contexts);
+        $this->indexQueueRoutes($source, $tokens, $contexts);
+        $this->indexQueueForwards($source, $tokens, $contexts);
+        $this->indexClassAndTraitDeclarations($source, $tokens, $contexts);
     }
 
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexClassAndTraitDeclarations(string $source, array $tokens, FileContext $context): void
+    private function indexClassAndTraitDeclarations(string $source, array $tokens, FileContextMap $contexts): void
     {
         $count = count($tokens);
 
@@ -238,6 +267,7 @@ final class ClassMetadataIndex
                 continue;
             }
 
+            $context = $contexts->at($tokens[$i]['offset']);
             $name = $tokens[$nameIndex]['text'];
             $interfaces = [];
             $parent = null;
@@ -334,7 +364,7 @@ final class ClassMetadataIndex
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexInterfaceDeclarations(array $tokens, FileContext $context): void
+    private function indexInterfaceDeclarations(array $tokens, FileContextMap $contexts): void
     {
         $count = count($tokens);
 
@@ -348,6 +378,7 @@ final class ClassMetadataIndex
                 continue;
             }
 
+            $context = $contexts->at($tokens[$i]['offset']);
             $parents = [];
             $buffer = '';
             $collecting = false;
@@ -453,17 +484,17 @@ final class ClassMetadataIndex
 
             $open = $this->nextText($tokens, $nameIndex + 1, '{', $end);
             if ($open === null) {
-                return [];
+                return ['@dynamic' => '@dynamic'];
             }
             $close = $this->matchingBrace($tokens, $open, $end);
             if ($close === null) {
-                return [];
+                return ['@dynamic' => '@dynamic'];
             }
 
             $bodyStart = $tokens[$open]['offset'] + 1;
             $body = substr($source, $bodyStart, max(0, $tokens[$close]['offset'] - $bodyStart));
             if (preg_match('/\breturn\s*\[(?<items>.*?)\]\s*;/s', $body, $match) !== 1) {
-                return [];
+                return ['@dynamic' => '@dynamic'];
             }
 
             $result = [];
@@ -520,7 +551,7 @@ final class ClassMetadataIndex
             return null;
         }
 
-        return $this->literalString($expression) ?? '@dynamic';
+        return $this->literalStringOrEnum($expression, $context) ?? '@dynamic';
     }
 
     /**
@@ -765,116 +796,14 @@ final class ClassMetadataIndex
                     return null;
                 }
 
-                $literal = '/(?:^|,)\s*'.$name.'\s*\(\s*(?:'.preg_quote($argumentName, '/').'\s*:\s*)?([\'\"])(.*?)\1\s*\)/s';
-                if (preg_match($literal, $block['attributes'], $attribute) === 1) {
-                    return stripcslashes($attribute[2]);
-                }
-
-                if (preg_match('/(?:^|,)\s*'.$name.'\s*\(/s', $block['attributes']) === 1) {
-                    return '@dynamic';
+                $expressionPattern = '/(?:^|,)\s*'.$name.'\s*\(\s*(?:'.preg_quote($argumentName, '/').'\s*:\s*)?(?<expression>[^,)]+)\s*\)/s';
+                if (preg_match($expressionPattern, $block['attributes'], $attribute) === 1) {
+                    return $this->literalStringOrEnum(trim($attribute['expression']), $context) ?? '@dynamic';
                 }
             }
         }
 
         return null;
-    }
-
-    /**
-     * @param  list<Token>  $tokens
-     */
-    private function parseContext(array $tokens): FileContext
-    {
-        $namespace = '';
-        $imports = [];
-        $braceDepth = 0;
-        $count = count($tokens);
-
-        for ($i = 0; $i < $count; $i++) {
-            $token = $tokens[$i];
-
-            if ($token['text'] === '{') {
-                $braceDepth++;
-            } elseif ($token['text'] === '}') {
-                $braceDepth = max(0, $braceDepth - 1);
-            }
-
-            if (($token['id'] ?? null) === T_NAMESPACE) {
-                $name = '';
-                for ($j = $i + 1; $j < $count; $j++) {
-                    if (in_array($tokens[$j]['text'], [';', '{'], true)) {
-                        break;
-                    }
-                    if ($this->isNameToken($tokens[$j]['id'] ?? null)) {
-                        $name .= $tokens[$j]['text'];
-                    }
-                }
-                $namespace = trim($name, " \t\n\r\0\x0B\\");
-
-                continue;
-            }
-
-            if (($token['id'] ?? null) === T_USE && $braceDepth === 0) {
-                $clause = '';
-                for ($j = $i + 1; $j < $count; $j++) {
-                    if ($tokens[$j]['text'] === ';') {
-                        $i = $j;
-                        break;
-                    }
-                    $clause .= $tokens[$j]['text'];
-                }
-
-                foreach ($this->parseUseClause($clause) as $alias => $fqcn) {
-                    $imports[$alias] = $fqcn;
-                }
-            }
-        }
-
-        return new FileContext($namespace, $imports);
-    }
-
-    /** @return array<string, string> */
-    private function parseUseClause(string $clause): array
-    {
-        $clause = trim($clause);
-        if ($clause === '' || str_starts_with($clause, 'function ') || str_starts_with($clause, 'const ')) {
-            return [];
-        }
-
-        $result = [];
-
-        if (preg_match('/^(.+?)\\\{(.+)\}$/', $clause, $matches) === 1) {
-            $prefix = trim($matches[1], '\\').'\\';
-            foreach (explode(',', $matches[2]) as $part) {
-                $this->appendUse($result, $prefix.trim($part));
-            }
-
-            return $result;
-        }
-
-        foreach (explode(',', $clause) as $part) {
-            $this->appendUse($result, trim($part));
-        }
-
-        return $result;
-    }
-
-    /** @param  array<string, string>  $result */
-    private function appendUse(array &$result, string $part): void
-    {
-        if ($part === '') {
-            return;
-        }
-
-        if (preg_match('/^(.+?)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/i', $part, $matches) === 1) {
-            $fqcn = ltrim(trim($matches[1]), '\\');
-            $alias = $matches[2];
-        } else {
-            $fqcn = ltrim(trim($part), '\\');
-            $segments = explode('\\', $fqcn);
-            $alias = end($segments) ?: $fqcn;
-        }
-
-        $result[$alias] = $fqcn;
     }
 
     private function parseSingleName(string $buffer, FileContext $context): ?string
@@ -901,9 +830,9 @@ final class ClassMetadataIndex
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexQueueRoutes(string $source, array $tokens, FileContext $context): void
+    private function indexQueueRoutes(string $source, array $tokens, FileContextMap $contexts): void
     {
-        foreach ($this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
+        foreach ($this->facadeAliasesForMap($contexts, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
             $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*route\s*\(/i';
             $ok = preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE);
             if ($ok === false || $ok === 0) {
@@ -911,7 +840,9 @@ final class ClassMetadataIndex
             }
 
             foreach ($matches[0] as [$matched, $offset]) {
-                if ($this->offsetIsNonCode($tokens, $offset)) {
+                $context = $contexts->at($offset);
+                if (! in_array($alias, $this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue'), true)
+                    || $this->offsetIsNonCode($tokens, $offset)) {
                     continue;
                 }
                 $open = $this->tokenIndexAtOrAfterOffset($tokens, $offset + strlen($matched) - 1, '(');
@@ -959,7 +890,7 @@ final class ClassMetadataIndex
                 }
 
                 $this->queueRouteConnections[strtolower(ltrim($target, '\\'))] =
-                    $this->literalString($connectionExpression) ?? '@dynamic';
+                    $this->literalStringOrEnum($connectionExpression, $context) ?? '@dynamic';
             }
 
             return;
@@ -981,7 +912,7 @@ final class ClassMetadataIndex
                 if (strcasecmp($value, 'null') === 0) {
                     return;
                 }
-                $connection = $this->literalString($value) ?? '@dynamic';
+                $connection = $this->literalStringOrEnum($value, $context) ?? '@dynamic';
                 break;
             }
         }
@@ -992,7 +923,7 @@ final class ClassMetadataIndex
             if (strcasecmp($value, 'null') === 0) {
                 return;
             }
-            $connection = $this->literalString($value) ?? '@dynamic';
+            $connection = $this->literalStringOrEnum($value, $context) ?? '@dynamic';
         }
 
         if ($connectionSpecified && $connection !== null) {
@@ -1003,9 +934,9 @@ final class ClassMetadataIndex
     /**
      * @param  list<Token>  $tokens
      */
-    private function indexQueueForwards(string $source, array $tokens, FileContext $context): void
+    private function indexQueueForwards(string $source, array $tokens, FileContextMap $contexts): void
     {
-        foreach ($this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
+        foreach ($this->facadeAliasesForMap($contexts, 'Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
             $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*forward\s*\(/i';
             $ok = preg_match_all($pattern, $source, $matches, PREG_OFFSET_CAPTURE);
             if ($ok === false || $ok === 0) {
@@ -1013,7 +944,9 @@ final class ClassMetadataIndex
             }
 
             foreach ($matches[0] as [$matched, $offset]) {
-                if ($this->offsetIsNonCode($tokens, $offset)) {
+                $context = $contexts->at($offset);
+                if (! in_array($alias, $this->facadeAliases($context, 'Illuminate\\Support\\Facades\\Queue', 'Queue'), true)
+                    || $this->offsetIsNonCode($tokens, $offset)) {
                     continue;
                 }
                 $open = $this->tokenIndexAtOrAfterOffset($tokens, $offset + strlen($matched) - 1, '(');
@@ -1026,12 +959,12 @@ final class ClassMetadataIndex
                 }
                 $argsStart = $tokens[$open]['offset'] + 1;
                 $arguments = substr($source, $argsStart, max(0, $tokens[$close]['offset'] - $argsStart));
-                $this->parseQueueForwardArguments($arguments);
+                $this->parseQueueForwardArguments($arguments, $context);
             }
         }
     }
 
-    private function parseQueueForwardArguments(string $arguments): void
+    private function parseQueueForwardArguments(string $arguments, FileContext $context): void
     {
         $parts = $this->splitTopLevelArguments($arguments);
         if ($parts === []) {
@@ -1043,7 +976,7 @@ final class ClassMetadataIndex
             if (preg_match('/^\s*connection\s*:\s*(.+)$/is', $part, $named) === 1) {
                 $value = trim($named[1]);
                 if (strcasecmp($value, 'null') !== 0) {
-                    $connection = $this->literalString($value) ?? '@dynamic';
+                    $connection = $this->literalStringOrEnum($value, $context) ?? '@dynamic';
                 }
                 break;
             }
@@ -1052,7 +985,7 @@ final class ClassMetadataIndex
         if ($connection === null && isset($parts[2])) {
             $value = trim($parts[2]);
             if (strcasecmp($value, 'null') !== 0) {
-                $connection = $this->literalString($value) ?? '@dynamic';
+                $connection = $this->literalStringOrEnum($value, $context) ?? '@dynamic';
             }
         }
 
@@ -1075,6 +1008,17 @@ final class ClassMetadataIndex
         if ($queue !== null) {
             $this->queueForwards[$queue] = $connection;
         }
+    }
+
+    /** @return list<string> */
+    private function facadeAliasesForMap(FileContextMap $contexts, string $fqcn, string $fallback): array
+    {
+        $aliases = [];
+        foreach ($contexts->contexts() as $context) {
+            $aliases = array_merge($aliases, $this->facadeAliases($context, $fqcn, $fallback));
+        }
+
+        return array_values(array_unique($aliases));
     }
 
     /** @return list<string> */
@@ -1151,6 +1095,100 @@ final class ClassMetadataIndex
         $parts[] = trim(substr($source, $start));
 
         return $parts;
+    }
+
+    private function ensureClassIndexed(string $class): void
+    {
+        $class = ltrim($class, '\\');
+        $key = strtolower($class);
+        if (isset($this->classes[$key], $this->indexingClasses[$key])) {
+            return;
+        }
+        $this->indexingClasses[$key] = true;
+
+        try {
+            foreach (spl_autoload_functions() ?: [] as $autoload) {
+                $loader = is_array($autoload) ? $autoload[0] : null;
+                if (! is_object($loader) || ! method_exists($loader, 'findFile')) {
+                    continue;
+                }
+                $file = $loader->findFile($class);
+                if (is_string($file) && $file !== '' && is_file($file)) {
+                    $this->indexFile($file);
+                    break;
+                }
+            }
+        } finally {
+            unset($this->indexingClasses[$key]);
+        }
+    }
+
+    /** @param list<Token> $tokens */
+    private function indexEnumDeclarations(array $tokens, FileContextMap $contexts): void
+    {
+        if (! defined('T_ENUM')) {
+            return;
+        }
+        $count = count($tokens);
+        for ($i = 0; $i < $count; $i++) {
+            if (($tokens[$i]['id'] ?? null) !== T_ENUM) {
+                continue;
+            }
+            $nameIndex = $this->nextTokenOfType($tokens, $i + 1, T_STRING);
+            $context = $contexts->at($tokens[$i]['offset']);
+            $open = $nameIndex === null ? null : $this->nextText($tokens, $nameIndex + 1, '{');
+            $close = $open === null ? null : $this->matchingBrace($tokens, $open);
+            if ($nameIndex === null || $open === null || $close === null) {
+                continue;
+            }
+            $enum = $context->namespace !== '' ? $context->namespace.'\\'.$tokens[$nameIndex]['text'] : $tokens[$nameIndex]['text'];
+            for ($j = $open + 1; $j < $close; $j++) {
+                if (($tokens[$j]['id'] ?? null) !== T_CASE) {
+                    continue;
+                }
+                $caseIndex = $this->nextTokenOfType($tokens, $j + 1, T_STRING, $close);
+                if ($caseIndex === null) {
+                    continue;
+                }
+                $equals = $this->nextText($tokens, $caseIndex + 1, '=', $close);
+                $valueIndex = $equals === null ? null : $this->nextSignificant($tokens, $equals + 1, $close);
+                if ($valueIndex === null || ($tokens[$valueIndex]['id'] ?? null) !== T_CONSTANT_ENCAPSED_STRING) {
+                    continue;
+                }
+                $value = $this->literalString($tokens[$valueIndex]['text']);
+                if ($value !== null) {
+                    $this->enumCaseValues[strtolower($enum.'::'.$tokens[$caseIndex]['text'])] = $value;
+                }
+            }
+        }
+    }
+
+    private function literalStringOrEnum(string $expression, FileContext $context): ?string
+    {
+        $literal = $this->literalString($expression);
+        if ($literal !== null) {
+            return $literal;
+        }
+        if (preg_match('/^(?<class>\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)::(?<case>[A-Za-z_][A-Za-z0-9_]*)$/', trim($expression), $match) !== 1) {
+            return null;
+        }
+        $class = $context->resolve($match['class']);
+        $this->ensureClassIndexed($class);
+
+        return $this->enumCaseValues[strtolower($class.'::'.$match['case'])] ?? null;
+    }
+
+    /** @param list<Token> $tokens */
+    private function nextSignificant(array $tokens, int $start, ?int $end = null): ?int
+    {
+        $end ??= count($tokens) - 1;
+        for ($i = $start; $i <= $end; $i++) {
+            if (! in_array($tokens[$i]['id'] ?? null, [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                return $i;
+            }
+        }
+
+        return null;
     }
 
     private function literalString(string $expression): ?string
@@ -1387,7 +1425,7 @@ final class ClassMetadataIndex
             }
             $end = $token['offset'] + strlen($token['text']);
             if ($offset >= $token['offset'] && $offset < $end) {
-                return $token['id'] !== null && in_array($token['id'], [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE], true);
+                return $token['id'] !== null && in_array($token['id'], [T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE, T_INLINE_HTML], true);
             }
         }
 
@@ -1455,16 +1493,6 @@ final class ClassMetadataIndex
         }
 
         return $tokens;
-    }
-
-    private function isNameToken(?int $id): bool
-    {
-        return in_array($id, array_filter([
-            T_STRING,
-            defined('T_NAME_QUALIFIED') ? T_NAME_QUALIFIED : null,
-            defined('T_NAME_FULLY_QUALIFIED') ? T_NAME_FULLY_QUALIFIED : null,
-            defined('T_NS_SEPARATOR') ? T_NS_SEPARATOR : null,
-        ]), true);
     }
 
     /**

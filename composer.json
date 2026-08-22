@@ -61,6 +61,7 @@
             "@check:autoload",
             "@format:test",
             "@analyse",
+            "@check:docs",
             "@test:smoke"
         ],
         "check:all": [
@@ -75,7 +76,8 @@
         "test": "pest",
         "test:coverage": "pest --coverage --min=80",
         "test:smoke": "@php tools/smoke.php",
-        "benchmark": "@php tools/benchmark.php"
+        "benchmark": "@php tools/benchmark.php",
+        "check:docs": "@php tools/check-docs.php"
     },
     "minimum-stability": "stable",
     "prefer-stable": true,
@@ -115,6 +117,7 @@
         "test": "Run the Pest suite.",
         "test:coverage": "Run Pest with the enforced 80% coverage baseline.",
         "test:smoke": "Run the dependency-free transaction-safety regression matrix.",
-            "benchmark": "Profile representative transaction-free, safe and side-effect-heavy analyzer workloads."
+        "benchmark": "Profile representative transaction-free, safe and side-effect-heavy analyzer workloads.",
+        "check:docs": "Verify the canonical rule catalog is represented in public documentation."
     }
 }
