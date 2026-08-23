@@ -157,3 +157,25 @@ jobs:
 
       - name: Enforce coverage baseline
         run: composer test:coverage
+
+  required:
+    name: Tests / Required
+    needs:
+      - quality
+      - lowest
+      - coverage
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every test job to succeed
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          LOWEST_RESULT: ${{ needs.lowest.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+        shell: bash
+        run: |
+          test "${QUALITY_RESULT}" = 'success'
+          test "${LOWEST_RESULT}" = 'success'
+          test "${COVERAGE_RESULT}" = 'success'
