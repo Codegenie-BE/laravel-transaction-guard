@@ -34,12 +34,17 @@ function benchmarkTransactionGuard(string $name, int $files, callable $sourceFac
 }
 
 $jsonOutput = in_array('--json', $argv, true);
+$smokeMode = in_array('--smoke', $argv, true);
+$counts = $smokeMode
+    ? ['transaction-free' => 5, 'safe' => 3, 'side-effect' => 3, 'metadata' => 3, 'mixed' => 3]
+    : ['transaction-free' => 1000, 'safe' => 250, 'side-effect' => 250, 'metadata' => 250, 'mixed' => 100];
+
 $workloads = [
-    'transaction-free-1000' => [1000, static fn (int $file): string => "<?php\nnamespace App\\Services; final class Service{$file} { public function run(): int { return 1; } }\n"],
-    'safe-transactions-250' => [250, static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\DB; final class Service{$file} { public function run(): void { DB::transaction(fn () => DB::table('orders')->update(['paid' => true])); } }\n"],
-    'side-effect-heavy-250' => [250, static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\DB; use Illuminate\\Support\\Facades\\Http; final class Service{$file} { public function run(): void { DB::transaction(fn () => Http::post('https://example.test')); } }\n"],
-    'metadata-heavy-250' => [250, static fn (int $file): string => "<?php\nnamespace App\\Jobs; use Illuminate\\Contracts\\Queue\\ShouldQueue; class Base{$file} implements ShouldQueue {} class Service{$file} extends Base{$file} {}\n"],
-    'mixed-laravel-100' => [100, static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\{DB,Http,Cache,Redis}; final class Service{$file} { public function run(): void { DB::transaction(function () { Http::post('https://example.test'); Cache::put('k', 1); Redis::set('k', 'v'); DB::table('orders')->update(['paid'=>true]); }); } }\n"],
+    'transaction-free-'.$counts['transaction-free'] => [$counts['transaction-free'], static fn (int $file): string => "<?php\nnamespace App\\Services; final class Service{$file} { public function run(): int { return 1; } }\n"],
+    'safe-transactions-'.$counts['safe'] => [$counts['safe'], static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\DB; final class Service{$file} { public function run(): void { DB::transaction(fn () => DB::table('orders')->update(['paid' => true])); } }\n"],
+    'side-effect-heavy-'.$counts['side-effect'] => [$counts['side-effect'], static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\DB; use Illuminate\\Support\\Facades\\Http; final class Service{$file} { public function run(): void { DB::transaction(fn () => Http::post('https://example.test')); } }\n"],
+    'metadata-heavy-'.$counts['metadata'] => [$counts['metadata'], static fn (int $file): string => "<?php\nnamespace App\\Jobs; use Illuminate\\Contracts\\Queue\\ShouldQueue; class Base{$file} implements ShouldQueue {} class Service{$file} extends Base{$file} {}\n"],
+    'mixed-laravel-'.$counts['mixed'] => [$counts['mixed'], static fn (int $file): string => "<?php\nnamespace App\\Services; use Illuminate\\Support\\Facades\\{DB,Http,Cache,Redis}; final class Service{$file} { public function run(): void { DB::transaction(function () { Http::post('https://example.test'); Cache::put('k', 1); Redis::set('k', 'v'); DB::table('orders')->update(['paid'=>true]); }); } }\n"],
 ];
 $results = [];
 foreach ($workloads as $name => [$files, $factory]) {
