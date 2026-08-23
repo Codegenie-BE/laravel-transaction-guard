@@ -17,6 +17,12 @@ updates:
       prefix-development: "chore"
       include: "scope"
     groups:
+      composer-framework-major:
+        patterns:
+          - "illuminate/*"
+          - "orchestra/testbench"
+        update-types:
+          - "major"
       composer-production-minor-patch:
         dependency-type: "production"
         patterns:
