@@ -39,6 +39,9 @@ final class ClassMetadataIndex
     /** @var array<string, true> */
     private array $indexingClasses = [];
 
+    /** @var array<string, true> */
+    private array $resolvedMetadata = [];
+
     /** @var array<string, string> */
     private array $enumCaseValues = [];
 
@@ -62,6 +65,9 @@ final class ClassMetadataIndex
         $key = strtolower(ltrim($class, '\\'));
         if (! isset($this->classes[$key])) {
             $this->ensureClassIndexed($class);
+        }
+        if (isset($this->classes[$key]) && ! isset($this->resolvedMetadata[$key])) {
+            $this->resolveLazyMetadata($key, []);
         }
 
         return $this->classes[$key] ?? null;
@@ -260,6 +266,7 @@ final class ClassMetadataIndex
             return;
         }
         $this->indexedFiles[$real] = true;
+        $this->resolvedMetadata = [];
 
         $source = @file_get_contents($file);
         if ($source === false) {
@@ -1149,11 +1156,71 @@ final class ClassMetadataIndex
         return $parts;
     }
 
+    /** @param array<string, true> $seen */
+    private function resolveLazyMetadata(string $key, array $seen): void
+    {
+        if (isset($this->resolvedMetadata[$key], $seen[$key]) || ! isset($this->classes[$key])) {
+            return;
+        }
+        $seen[$key] = true;
+        $metadata = $this->classes[$key];
+
+        foreach ($metadata->interfaces as $interface) {
+            $this->ensureInterfaceIndexed($interface, []);
+        }
+
+        foreach ($metadata->traits as $trait) {
+            $this->ensureClassIndexed($trait);
+            $this->resolveLazyMetadata(strtolower(ltrim($trait, '\\')), $seen);
+        }
+
+        if ($metadata->parent !== null) {
+            $this->ensureClassIndexed($metadata->parent);
+            $this->resolveLazyMetadata(strtolower(ltrim($metadata->parent, '\\')), $seen);
+        }
+
+        $metadata = $this->classes[$key];
+        $this->classes[$key] = new ClassMetadata(
+            name: $metadata->name,
+            interfaces: $this->inheritedInterfacesForClass($key, []),
+            parent: $metadata->parent,
+            constructorAfterCommit: $metadata->constructorAfterCommit,
+            constructorBeforeCommit: $metadata->constructorBeforeCommit,
+            constructorQueueConnection: $metadata->constructorQueueConnection,
+            declaresConstructor: $metadata->declaresConstructor,
+            queueConnectionAttribute: $metadata->queueConnectionAttribute,
+            traits: $metadata->traits,
+            queueName: $metadata->queueName,
+            afterCommitOverride: $metadata->afterCommitOverride,
+            debounced: $metadata->debounced,
+        );
+        $this->inheritConstructorBehaviorFor($key, []);
+        $this->resolvedMetadata[$key] = true;
+    }
+
+    /** @param array<string, true> $seen */
+    private function ensureInterfaceIndexed(string $interface, array $seen): void
+    {
+        $key = strtolower(ltrim($interface, '\\'));
+        if (isset($seen[$key])) {
+            return;
+        }
+        $seen[$key] = true;
+
+        if (! array_key_exists($key, $this->interfaceParents)) {
+            $this->ensureClassIndexed($interface);
+        }
+
+        foreach ($this->interfaceParents[$key] ?? [] as $parent) {
+            $this->ensureInterfaceIndexed($parent, $seen);
+        }
+    }
+
     private function ensureClassIndexed(string $class): void
     {
         $class = ltrim($class, '\\');
         $key = strtolower($class);
-        if (isset($this->classes[$key], $this->indexingClasses[$key])) {
+        if (isset($this->classes[$key]) || isset($this->indexingClasses[$key]) || array_key_exists($key, $this->interfaceParents)) {
             return;
         }
         $this->indexingClasses[$key] = true;
@@ -1394,7 +1461,6 @@ final class ClassMetadataIndex
         return array_values(array_unique($traits));
     }
 
-    /** @param  array<string, true>  $seen */
     /** @param array<string, true> $seen */
     private function queueConnectionAttributeFor(string $class, array $seen = []): ?string
     {
@@ -1403,7 +1469,7 @@ final class ClassMetadataIndex
             return null;
         }
         $seen[$key] = true;
-        $metadata = $this->classes[$key] ?? null;
+        $metadata = $this->metadata($class);
         if ($metadata === null) {
             return null;
         }
@@ -1422,7 +1488,7 @@ final class ClassMetadataIndex
             return null;
         }
         $seen[$key] = true;
-        $metadata = $this->classes[$key] ?? null;
+        $metadata = $this->metadata($class);
         if ($metadata === null) {
             return null;
         }
@@ -1441,7 +1507,7 @@ final class ClassMetadataIndex
             return null;
         }
         $seen[$key] = true;
-        $metadata = $this->classes[$key] ?? null;
+        $metadata = $this->metadata($class);
         if ($metadata === null) {
             return null;
         }
