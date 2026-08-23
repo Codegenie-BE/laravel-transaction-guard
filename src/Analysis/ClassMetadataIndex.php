@@ -1159,7 +1159,7 @@ final class ClassMetadataIndex
     /** @param array<string, true> $seen */
     private function resolveLazyMetadata(string $key, array $seen): void
     {
-        if (isset($this->resolvedMetadata[$key], $seen[$key]) || ! isset($this->classes[$key])) {
+        if (isset($this->resolvedMetadata[$key]) || isset($seen[$key]) || ! isset($this->classes[$key])) {
             return;
         }
         $seen[$key] = true;
