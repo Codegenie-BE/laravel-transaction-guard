@@ -134,3 +134,24 @@ PHP);
 
     expect($httpFindings)->toBe([]);
 });
+
+it('does not suppress generic static event analysis because another namespace uses the same facade alias', function (): void {
+    $findings = analyzeOffsetAwareFixture(<<<'PHP'
+<?php
+namespace App\First;
+use Illuminate\Support\Facades\Event as Emitter;
+
+namespace App\Second;
+use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Support\Facades\DB;
+class Emitter { use Dispatchable; }
+DB::transaction(fn () => Emitter::dispatch());
+PHP);
+
+    $events = array_values(array_filter(
+        $findings,
+        static fn ($finding): bool => $finding->rule === 'TG002',
+    ));
+
+    expect($events)->toHaveCount(1);
+});
