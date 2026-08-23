@@ -187,9 +187,8 @@ jobs:
             unzip -Z1 "${archive}" | awk '
               {
                 entry=$0
-                sub(/^[^/]+\//, "", entry)
                 if (entry == "" || entry ~ /\/$/) next
-                if (entry == "composer.json" || entry == "README.md" || entry == "LICENSE.md" || entry == "CHANGELOG.md") next
+                if (entry == "composer.json" || entry == "README.md" || entry == "LICENSE.md" || entry == "CHANGELOG.md" || entry == "SECURITY.md") next
                 if (entry ~ /^src\// || entry ~ /^config\//) next
                 print entry
               }
