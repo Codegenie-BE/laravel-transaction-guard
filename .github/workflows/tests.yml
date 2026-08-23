@@ -158,12 +158,56 @@ jobs:
       - name: Enforce coverage baseline
         run: composer test:coverage
 
+  distribution:
+    name: Distribution archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate distribution archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build
+          composer archive --format=zip --dir=build
+          archive="$(find build -maxdepth 1 -type f -name '*.zip' | head -n 1)"
+          test -n "${archive}"
+
+          invalid="$({
+            unzip -Z1 "${archive}" | awk '
+              {
+                entry=$0
+                if (entry == "" || entry ~ /\/$/) next
+                if (entry == "composer.json" || entry == "README.md" || entry == "LICENSE.md" || entry == "CHANGELOG.md" || entry == "SECURITY.md") next
+                if (entry ~ /^src\// || entry ~ /^config\//) next
+                print entry
+              }
+            '
+          } || true)"
+
+          if [ -n "${invalid}" ]; then
+            echo 'Distribution archive contains files outside the explicit allowlist:' >&2
+            printf '%s\n' "${invalid}" >&2
+            exit 1
+          fi
+
   required:
     name: Tests / Required
     needs:
       - quality
       - lowest
       - coverage
+      - distribution
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -174,8 +218,10 @@ jobs:
           QUALITY_RESULT: ${{ needs.quality.result }}
           LOWEST_RESULT: ${{ needs.lowest.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
+          DISTRIBUTION_RESULT: ${{ needs.distribution.result }}
         shell: bash
         run: |
           test "${QUALITY_RESULT}" = 'success'
           test "${LOWEST_RESULT}" = 'success'
           test "${COVERAGE_RESULT}" = 'success'
+          test "${DISTRIBUTION_RESULT}" = 'success'
