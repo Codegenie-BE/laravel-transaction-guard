@@ -37,8 +37,8 @@ final class SourceScanner
     /** @var array<string, list<string>> */
     private array $facadeAliasCache = [];
 
-    /** @var array<string, list<array{fqcn:string,fallback:string}>> */
-    private array $facadeAliasTargets = [];
+    /** @var array<string, array{fqcn:string,fallback:string}> */
+    private array $activeFacadeAliasTargets = [];
 
     /** @var array<int, list<string>> */
     private array $suppressionComments = [];
@@ -104,7 +104,7 @@ final class SourceScanner
         $this->statementCache = [];
         $this->statementCodeCache = [];
         $this->facadeAliasCache = [];
-        $this->facadeAliasTargets = [];
+        $this->activeFacadeAliasTargets = [];
         $this->preScanFindings = [];
         $this->regexErrors = [];
 
@@ -2908,11 +2908,15 @@ final class SourceScanner
     private function facadeAliases(string $fqcn, string $fallback): array
     {
         $cacheKey = strtolower(ltrim($fqcn, '\\')).'|'.$fallback;
+        $normalized = ltrim($fqcn, '\\');
+
         if (isset($this->facadeAliasCache[$cacheKey])) {
-            return $this->facadeAliasCache[$cacheKey];
+            $aliases = $this->facadeAliasCache[$cacheKey];
+            $this->activateFacadeAliasTargets($aliases, $normalized, $fallback);
+
+            return $aliases;
         }
 
-        $normalized = ltrim($fqcn, '\\');
         $aliases = ['\\'.$normalized];
         foreach ($this->classIndex->contextsFor($this->file) as $context) {
             $fallbackImport = $context->importForAlias($fallback);
@@ -2927,23 +2931,21 @@ final class SourceScanner
         }
 
         $aliases = array_values(array_unique($aliases));
-        foreach ($aliases as $alias) {
-            $this->registerFacadeAliasTarget($alias, $normalized, $fallback);
-        }
+        $this->activateFacadeAliasTargets($aliases, $normalized, $fallback);
 
         return $this->facadeAliasCache[$cacheKey] = $aliases;
     }
 
-    private function registerFacadeAliasTarget(string $alias, string $fqcn, string $fallback): void
+    /** @param list<string> $aliases */
+    private function activateFacadeAliasTargets(array $aliases, string $fqcn, string $fallback): void
     {
-        $key = strtolower(ltrim($alias, '\\'));
-        foreach ($this->facadeAliasTargets[$key] ?? [] as $target) {
-            if (strcasecmp($target['fqcn'], $fqcn) === 0 && strcasecmp($target['fallback'], $fallback) === 0) {
-                return;
-            }
+        $this->activeFacadeAliasTargets = [];
+        foreach ($aliases as $alias) {
+            $this->activeFacadeAliasTargets[strtolower(ltrim($alias, '\\'))] = [
+                'fqcn' => $fqcn,
+                'fallback' => $fallback,
+            ];
         }
-
-        $this->facadeAliasTargets[$key][] = ['fqcn' => $fqcn, 'fallback' => $fallback];
     }
 
     private function facadeAliasValidAt(string $alias, string $fqcn, string $fallback, int $offset): bool
@@ -2978,27 +2980,34 @@ final class SourceScanner
         if (! is_array($full) || ! isset($full[0]) || ! is_string($full[0])) {
             return true;
         }
-        if (preg_match('/^\s*(?<alias>\\?[A-Za-z_][A-Za-z0-9_\\]*)\s*::/', $full[0], $aliasMatch) !== 1) {
+
+        $separator = strpos($full[0], '::');
+        if ($separator === false) {
             return true;
         }
-
-        $alias = $aliasMatch['alias'];
-        if (! str_contains($pattern, preg_quote($alias, '/'))) {
+        $alias = trim(substr($full[0], 0, $separator));
+        $normalizedAlias = ltrim($alias, '\\');
+        if ($normalizedAlias === '') {
             return true;
         }
-
-        $targets = $this->facadeAliasTargets[strtolower(ltrim($alias, '\\'))] ?? [];
-        if ($targets === []) {
-            return true;
-        }
-
-        foreach ($targets as $target) {
-            if ($this->facadeAliasValidAt($alias, $target['fqcn'], $target['fallback'], $offset)) {
+        foreach (explode('\\', $normalizedAlias) as $segment) {
+            if ($segment === '' || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $segment) !== 1) {
                 return true;
             }
         }
 
-        return false;
+        // Generic class-static matchers also flow through matches(). Only enforce facade
+        // binding when the current regex literally embeds the alias returned by facadeAliases().
+        if (! str_contains($pattern, preg_quote($alias, '/'))) {
+            return true;
+        }
+
+        $target = $this->activeFacadeAliasTargets[strtolower($normalizedAlias)] ?? null;
+        if ($target === null) {
+            return true;
+        }
+
+        return $this->facadeAliasValidAt($alias, $target['fqcn'], $target['fallback'], $offset);
     }
 
     private function resolveClassAt(string $class, int $offset): string
