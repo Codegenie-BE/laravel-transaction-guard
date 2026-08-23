@@ -155,3 +155,30 @@ PHP);
 
     expect($jobs)->toHaveCount(1);
 });
+
+it('binds an overlapping facade alias to the current facade target', function (): void {
+    $findings = analyzeOffsetAwareFixture(<<<'PHP'
+<?php
+namespace App\First;
+use Illuminate\Support\Facades\Cache as Store;
+use Illuminate\Support\Facades\DB;
+DB::transaction(fn () => Store::set('key', 'value'));
+
+namespace App\Second;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Redis as Store;
+DB::transaction(fn () => Store::set('key', 'value'));
+PHP);
+
+    $cache = array_values(array_filter(
+        $findings,
+        static fn ($finding): bool => $finding->rule === 'TG008',
+    ));
+    $redis = array_values(array_filter(
+        $findings,
+        static fn ($finding): bool => $finding->rule === 'TG020',
+    ));
+
+    expect($cache)->toHaveCount(1)
+        ->and($redis)->toHaveCount(1);
+});
