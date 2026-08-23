@@ -107,7 +107,13 @@ final class RedisOperationClassifier
             return [false, false];
         }
 
-        $modifierExpression = preg_replace('/^\s*modifier\s*:\s*/i', '', $arguments[1]) ?? $arguments[1];
+        $modifierExpression = preg_replace('/^\s*(?:modifier|options)\s*:\s*/i', '', $arguments[1]) ?? $arguments[1];
+        $modifierExpression = trim($modifierExpression);
+
+        if (str_starts_with($modifierExpression, '[')) {
+            return self::getexOptionsArrayMutationState($modifierExpression);
+        }
+
         $modifier = self::literalString($modifierExpression);
         if ($modifier === null) {
             return [false, true];
@@ -122,6 +128,50 @@ final class RedisOperationClassifier
         }
 
         return [false, true];
+    }
+
+    /** @return array{bool,bool} mutates, unknown */
+    private static function getexOptionsArrayMutationState(string $expression): array
+    {
+        $expression = trim($expression);
+        $array = self::delimitedContent($expression, 0, '[', ']');
+        if ($array === null || trim(substr($expression, $array[1] + 1)) !== '') {
+            return [false, true];
+        }
+
+        [$content] = $array;
+        $entries = self::splitTopLevelArguments($content);
+        if ($entries === []) {
+            return [false, false];
+        }
+
+        $unknown = false;
+        foreach ($entries as $entry) {
+            if (preg_match('/^(?<key>.+?)\s*=>\s*(?<value>.+)$/s', $entry, $pair) === 1) {
+                $key = self::literalString(trim($pair['key']));
+                if ($key === null) {
+                    $unknown = true;
+
+                    continue;
+                }
+                if (in_array(strtoupper($key), self::GETEX_MUTATING_MODIFIERS, true)) {
+                    return [true, false];
+                }
+
+                $unknown = true;
+
+                continue;
+            }
+
+            $value = self::literalString($entry);
+            if ($value !== null && in_array(strtoupper($value), self::GETEX_MUTATING_MODIFIERS, true)) {
+                return [true, false];
+            }
+
+            $unknown = true;
+        }
+
+        return [false, $unknown];
     }
 
     /** @return array{string,int}|null */
