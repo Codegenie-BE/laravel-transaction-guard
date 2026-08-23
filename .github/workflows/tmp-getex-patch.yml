@@ -1,0 +1,152 @@
+name: Temporary GETEX scanner patch
+
+on:
+  push:
+    branches:
+      - fix/redis-getex-semantics
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/redis-getex-semantics
+
+      - name: Patch GETEX scanner semantics
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/Analysis/SourceScanner.php')
+          source = path.read_text()
+
+          old_local = r'''            if ($handle['kind'] === 'redis' && in_array($method, array_map('strtolower', OperationCatalog::REDIS_MUTATIONS), true)) {
+              $this->appendFinding($findings, $offset, 'TG020', $method === 'publish' ? Severity::Error : Severity::Warning,
+                  'Redis state is mutated through a locally assigned Redis connection while a database transaction is open.',
+                  'Move the Redis mutation after commit or use an idempotent/outbox strategy.', 'high');
+              $this->appendRetryFinding($findings, $offset, $tx, 'Redis mutation');
+
+              continue;
+          }
+'''
+          new_local = r'''            if ($handle['kind'] === 'redis' && $method === 'getex') {
+              [$mutates, $unknown] = RedisOperationClassifier::getexMutationState($this->statementAt($offset));
+              if ($mutates || $unknown) {
+                  $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                      $mutates
+                          ? 'Redis GETEX changes expiration state through a locally assigned Redis connection while a database transaction is open.'
+                          : 'Redis GETEX through a locally assigned Redis connection cannot be proven read-only while a database transaction is open.',
+                      'Keep GETEX expiry changes after commit; make the modifier statically visible when the call is intentionally read-only.',
+                      $mutates ? 'high' : 'medium');
+                  $this->appendRetryFinding($findings, $offset, $tx, 'Redis GETEX');
+              }
+
+              continue;
+          }
+
+          if ($handle['kind'] === 'redis' && in_array($method, array_map('strtolower', OperationCatalog::REDIS_MUTATIONS), true)) {
+              $this->appendFinding($findings, $offset, 'TG020', $method === 'publish' ? Severity::Error : Severity::Warning,
+                  'Redis state is mutated through a locally assigned Redis connection while a database transaction is open.',
+                  'Move the Redis mutation after commit or use an idempotent/outbox strategy.', 'high');
+              $this->appendRetryFinding($findings, $offset, $tx, 'Redis mutation');
+
+              continue;
+          }
+'''
+          if source.count(old_local) != 1:
+              raise SystemExit('expected local Redis mutation block exactly once')
+          source = source.replace(old_local, new_local, 1)
+
+          command_anchor = "            $commandPattern = "
+          if source.count(command_anchor) != 1:
+              raise SystemExit('expected Redis command pattern anchor exactly once')
+          facade_getex = r'''            $getexPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::(?:(?!;).)*?\\bgetex\\s*\\(/is';
+          foreach ($this->matches($getexPattern) as $match) {
+              $offset = $match['offset'];
+              $tx = $this->eligibleTransaction($offset);
+              if ($tx === null) {
+                  continue;
+              }
+
+              [$mutates, $unknown] = RedisOperationClassifier::getexMutationState($this->statementAt($offset));
+              if (! $mutates && ! $unknown) {
+                  continue;
+              }
+
+              $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                  $mutates
+                      ? 'Redis GETEX changes expiration state while a database transaction is open.'
+                      : 'Redis GETEX cannot be proven read-only while a database transaction is open.',
+                  'Keep GETEX expiry changes after commit; make the modifier statically visible when the call is intentionally read-only.',
+                  $mutates ? 'high' : 'medium');
+              $this->appendRetryFinding($findings, $offset, $tx, 'Redis GETEX');
+          }
+
+'''
+          source = source.replace(command_anchor, facade_getex + command_anchor, 1)
+
+          old_kind = r'''                $command = strtoupper($this->captured($match, 'command'));
+              $kind = OperationCatalog::redisCommandKind($command);
+              if ($kind === 'read') {
+                  continue;
+              }
+'''
+          new_kind = r'''                $command = strtoupper($this->captured($match, 'command'));
+              if ($command === 'GETEX') {
+                  [$mutates, $unknown] = RedisOperationClassifier::getexMutationState($this->statementAt($offset));
+                  if (! $mutates && ! $unknown) {
+                      continue;
+                  }
+                  $kind = $mutates ? 'mutation' : 'unknown';
+              } else {
+                  $kind = OperationCatalog::redisCommandKind($command);
+                  if ($kind === 'read') {
+                      continue;
+                  }
+              }
+'''
+          if source.count(old_kind) != 1:
+              raise SystemExit('expected Redis command kind block exactly once')
+          source = source.replace(old_kind, new_kind, 1)
+
+          old_callback = r'''        if (preg_match('/->\\s*(?:'.$mutations.')\\s*\\(/i', $code) === 1) {
+            return [true, false];
+        }
+
+        $hasInlineCallable = preg_match('/(?:pipeline|transaction)\\s*\\(\\s*(?:static\\s+)?(?:function|fn)\\b/i', $code) === 1;
+'''
+          new_callback = r'''        if (preg_match('/->\\s*(?:'.$mutations.')\\s*\\(/i', $code) === 1) {
+            return [true, false];
+        }
+
+        if (preg_match('/->\\s*getex\\s*\\(/i', $code) === 1) {
+            [$mutates, $unknown] = RedisOperationClassifier::getexMutationState($statement);
+            if ($mutates || $unknown) {
+                return [$mutates, $unknown];
+            }
+        }
+
+        $hasInlineCallable = preg_match('/(?:pipeline|transaction)\\s*\\(\\s*(?:static\\s+)?(?:function|fn)\\b/i', $code) === 1;
+'''
+          if source.count(old_callback) != 1:
+              raise SystemExit('expected Redis callback mutation block exactly once')
+          source = source.replace(old_callback, new_callback, 1)
+
+          path.write_text(source)
+          PY
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/Analysis/SourceScanner.php
+          git commit -m 'fix: classify Redis GETEX by expiry arguments'
+          git push origin HEAD:fix/redis-getex-semantics
