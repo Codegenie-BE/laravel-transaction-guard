@@ -53,7 +53,6 @@ final class SourceScanner
 
     private string $file = '';
 
-
     public function __construct(
         private readonly ClassMetadataIndex $classIndex,
         private readonly AnalysisConfig $config = new AnalysisConfig,
@@ -2486,7 +2485,6 @@ final class SourceScanner
     /** @param array{offset:int,matches:array<int|string,mixed>} $match */
     private function captured(array $match, string $name): string
     {
-        $this->context = $this->classIndex->contextFor($this->file, $match['offset']);
         $value = $match['matches'][$name] ?? '';
         if (is_array($value)) {
             $captured = $value[0] ?? '';
