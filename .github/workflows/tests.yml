@@ -20,36 +20,8 @@ env:
   COMPOSER_MAX_PARALLEL_HTTP: 4
 
 jobs:
-  patch-phpstan-cleanup:
-    name: Temporary PHPStan cleanup
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'hardening/post-v040-audit' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout hardening branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: hardening/post-v040-audit
-
-      - name: Apply guarded PHPStan cleanup
-        run: python tools/apply-phpstan-cleanup.py
-
-      - name: Commit cleanup
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/Analysis/SourceScanner.php
-          git commit -m 'fix: remove stale scanner context state'
-          git push origin HEAD:hardening/post-v040-audit
-
   quality:
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
-    needs: patch-phpstan-cleanup
-    if: ${{ always() && (needs.patch-phpstan-cleanup.result == 'success' || needs.patch-phpstan-cleanup.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -123,8 +95,6 @@ jobs:
 
   lowest:
     name: Lowest supported dependencies
-    needs: patch-phpstan-cleanup
-    if: ${{ always() && (needs.patch-phpstan-cleanup.result == 'success' || needs.patch-phpstan-cleanup.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -165,8 +135,6 @@ jobs:
 
   lowest-laravel13:
     name: Lowest supported Laravel 13 dependencies
-    needs: patch-phpstan-cleanup
-    if: ${{ always() && (needs.patch-phpstan-cleanup.result == 'success' || needs.patch-phpstan-cleanup.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -207,8 +175,6 @@ jobs:
 
   coverage:
     name: Coverage / PHP 8.5 / Laravel 13
-    needs: patch-phpstan-cleanup
-    if: ${{ always() && (needs.patch-phpstan-cleanup.result == 'success' || needs.patch-phpstan-cleanup.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -234,8 +200,6 @@ jobs:
 
   distribution:
     name: Distribution archive
-    needs: patch-phpstan-cleanup
-    if: ${{ always() && (needs.patch-phpstan-cleanup.result == 'success' || needs.patch-phpstan-cleanup.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
