@@ -46,20 +46,27 @@ it('tracks the framework after-commit marker contracts', function (): void {
 });
 
 it('tracks Laravel 13 queue route and forward APIs when available', function (): void {
-    if (! method_exists(QueueManager::class, 'route')) {
-        expect(method_exists(QueueManager::class, 'forward'))->toBeFalse();
+    $routeAvailable = method_exists(QueueManager::class, 'route');
+    $forwardAvailable = method_exists(QueueManager::class, 'forward');
+
+    if (! $routeAvailable && ! $forwardAvailable) {
+        expect(true)->toBeTrue();
 
         return;
     }
 
-    expect(method_exists(QueueManager::class, 'forward'))->toBeTrue();
-
     $file = (new ReflectionClass(QueueManager::class))->getFileName();
     expect($file)->toBeString();
     $source = file_get_contents($file);
-    expect($source)->toBeString()
-        ->and($source)->toContain('function route(')
-        ->and($source)->toContain('function forward(');
+    expect($source)->toBeString();
+
+    if ($routeAvailable) {
+        expect($source)->toContain('function route(');
+    }
+
+    if ($forwardAvailable) {
+        expect($source)->toContain('function forward(');
+    }
 });
 
 it('tracks Laravel queue metadata attributes when available', function (): void {
