@@ -2,15 +2,12 @@ name: Temporary GETEX scanner patch
 
 on:
   push:
-    branches:
-      - fix/redis-getex-semantics
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,11 +23,12 @@ jobs:
 
           path = Path('src/Analysis/SourceScanner.php')
           source = path.read_text()
+          status = []
 
           local_anchor = "            if ($handle['kind'] === 'redis' && in_array($method, array_map('strtolower', OperationCatalog::REDIS_MUTATIONS), true)) {"
-          if source.count(local_anchor) != 1:
-              raise SystemExit('expected local Redis mutation anchor exactly once')
-          local_getex = r'''            if ($handle['kind'] === 'redis' && $method === 'getex') {
+          status.append(f'local_anchor={source.count(local_anchor)}')
+          if source.count(local_anchor) == 1 and "$method === 'getex'" not in source:
+              local_getex = r'''            if ($handle['kind'] === 'redis' && $method === 'getex') {
                 [$mutates, $unknown] = RedisOperationClassifier::getexMutationState($this->statementAt($offset));
                 if ($mutates || $unknown) {
                     $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
@@ -46,12 +44,12 @@ jobs:
             }
 
 '''
-          source = source.replace(local_anchor, local_getex + local_anchor, 1)
+              source = source.replace(local_anchor, local_getex + local_anchor, 1)
 
           command_anchor = "            $commandPattern = "
-          if source.count(command_anchor) != 1:
-              raise SystemExit('expected Redis command pattern anchor exactly once')
-          facade_getex = r'''            $getexPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::(?:(?!;).)*?\\bgetex\\s*\\(/is';
+          status.append(f'command_anchor={source.count(command_anchor)}')
+          if source.count(command_anchor) == 1 and '$getexPattern =' not in source:
+              facade_getex = r'''            $getexPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::(?:(?!;).)*?\\bgetex\\s*\\(/is';
             foreach ($this->matches($getexPattern) as $match) {
                 $offset = $match['offset'];
                 $tx = $this->eligibleTransaction($offset);
@@ -74,12 +72,12 @@ jobs:
             }
 
 '''
-          source = source.replace(command_anchor, facade_getex + command_anchor, 1)
+              source = source.replace(command_anchor, facade_getex + command_anchor, 1)
 
           kind_anchor = "                $kind = OperationCatalog::redisCommandKind($command);"
-          if source.count(kind_anchor) != 1:
-              raise SystemExit('expected Redis command kind anchor exactly once')
-          kind_logic = r'''                if ($command === 'GETEX') {
+          status.append(f'kind_anchor={source.count(kind_anchor)}')
+          if source.count(kind_anchor) == 1 and "if ($command === 'GETEX')" not in source:
+              kind_logic = r'''                if ($command === 'GETEX') {
                     [$mutates, $unknown] = RedisOperationClassifier::getexMutationState($this->statementAt($offset));
                     if (! $mutates && ! $unknown) {
                         continue;
@@ -88,12 +86,12 @@ jobs:
                 } else {
                     $kind = OperationCatalog::redisCommandKind($command);
                 }'''
-          source = source.replace(kind_anchor, kind_logic, 1)
+              source = source.replace(kind_anchor, kind_logic, 1)
 
           callback_anchor = "        $hasInlineCallable = preg_match("
-          if source.count(callback_anchor) != 1:
-              raise SystemExit('expected Redis callback anchor exactly once')
-          callback_getex = r'''        if (preg_match('/->\\s*getex\\s*\\(/i', $code) === 1) {
+          status.append(f'callback_anchor={source.count(callback_anchor)}')
+          if source.count(callback_anchor) == 1 and "RedisOperationClassifier::getexMutationState($statement)" not in source:
+              callback_getex = r'''        if (preg_match('/->\\s*getex\\s*\\(/i', $code) === 1) {
             [$mutates, $unknown] = RedisOperationClassifier::getexMutationState($statement);
             if ($mutates || $unknown) {
                 return [$mutates, $unknown];
@@ -101,9 +99,10 @@ jobs:
         }
 
 '''
-          source = source.replace(callback_anchor, callback_getex + callback_anchor, 1)
+              source = source.replace(callback_anchor, callback_getex + callback_anchor, 1)
 
           path.write_text(source)
+          Path('.github/getex-patch-status.txt').write_text('\n'.join(status) + '\n')
           PY
 
       - name: Commit patch
@@ -111,6 +110,9 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/Analysis/SourceScanner.php
+          git add src/Analysis/SourceScanner.php .github/getex-patch-status.txt
+          if git diff --cached --quiet; then
+            exit 0
+          fi
           git commit -m 'fix: classify Redis GETEX by expiry arguments'
           git push origin HEAD:fix/redis-getex-semantics
