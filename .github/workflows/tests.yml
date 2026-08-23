@@ -20,45 +20,8 @@ env:
   COMPOSER_MAX_PARALLEL_HTTP: 4
 
 jobs:
-  patch-hardening:
-    name: Temporary hardening patch
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'hardening/post-v040-audit' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout hardening branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: hardening/post-v040-audit
-
-      - name: Extract and run audited patch script
-        shell: bash
-        run: |
-          set -euo pipefail
-          sed -n "/^[[:space:]]*python - <<'PY'$/,/^[[:space:]]*PY$/p" .github/workflows/tmp-post-v040-hardening.yml \
-            | sed '1d;$d;s/^          //' > /tmp/post-v040-patch.py
-          python /tmp/post-v040-patch.py
-
-      - name: Commit patched analyzer files
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/Analysis/SourceScanner.php src/Analysis/ClassMetadataIndex.php
-          if git diff --cached --quiet; then
-            echo 'Analyzer patch already applied.'
-            exit 0
-          fi
-          git commit -m 'fix: harden analyzer context and Redis coverage'
-          git push origin HEAD:hardening/post-v040-audit
-
   quality:
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
-    needs: patch-hardening
-    if: ${{ always() && (needs.patch-hardening.result == 'success' || needs.patch-hardening.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -132,8 +95,6 @@ jobs:
 
   lowest:
     name: Lowest supported dependencies
-    needs: patch-hardening
-    if: ${{ always() && (needs.patch-hardening.result == 'success' || needs.patch-hardening.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -174,8 +135,6 @@ jobs:
 
   lowest-laravel13:
     name: Lowest supported Laravel 13 dependencies
-    needs: patch-hardening
-    if: ${{ always() && (needs.patch-hardening.result == 'success' || needs.patch-hardening.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -216,8 +175,6 @@ jobs:
 
   coverage:
     name: Coverage / PHP 8.5 / Laravel 13
-    needs: patch-hardening
-    if: ${{ always() && (needs.patch-hardening.result == 'success' || needs.patch-hardening.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -243,8 +200,6 @@ jobs:
 
   distribution:
     name: Distribution archive
-    needs: patch-hardening
-    if: ${{ always() && (needs.patch-hardening.result == 'success' || needs.patch-hardening.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
