@@ -17,17 +17,39 @@ final class OperationCatalog
     public const RATE_LIMITER_MUTATIONS = ['attempt', 'hit', 'increment', 'decrement', 'clear', 'resetAttempts'];
 
     public const REDIS_MUTATIONS = [
-        'set', 'setex', 'psetex', 'mset', 'del', 'unlink', 'incr', 'incrby', 'incrbyfloat', 'decr',
-        'decrby', 'hset', 'hmset', 'hdel', 'hincrby', 'lpush', 'rpush', 'lpop', 'rpop', 'ltrim',
-        'sadd', 'srem', 'smove', 'zadd', 'zincrby', 'zrem', 'expire', 'pexpire', 'persist', 'flushdb',
-        'flushall', 'publish', 'xadd', 'xdel', 'xtrim', 'pfadd', 'pfmerge', 'setbit', 'bitop', 'geoadd',
+        'set', 'setex', 'psetex', 'setnx', 'mset', 'msetnx', 'setrange', 'append', 'getset', 'getdel', 'getex',
+        'del', 'unlink', 'rename', 'renamenx', 'copy', 'move', 'restore', 'migrate',
+        'incr', 'incrby', 'incrbyfloat', 'decr', 'decrby',
+        'hset', 'hsetnx', 'hmset', 'hdel', 'hincrby', 'hincrbyfloat', 'hexpire', 'hpexpire', 'hexpireat',
+        'hpexpireat', 'hpersist',
+        'lpush', 'lpushx', 'rpush', 'rpushx', 'lpop', 'rpop', 'lset', 'linsert', 'lrem', 'ltrim', 'lmove',
+        'blmove', 'rpoplpush', 'brpoplpush', 'lmpop', 'blmpop',
+        'sadd', 'srem', 'smove', 'spop', 'sinterstore', 'sunionstore', 'sdiffstore',
+        'zadd', 'zincrby', 'zrem', 'zremrangebyrank', 'zremrangebyscore', 'zremrangebylex', 'zpopmin',
+        'zpopmax', 'bzpopmin', 'bzpopmax', 'zmpop', 'bzmpop', 'zinterstore', 'zunionstore', 'zdiffstore',
+        'zrangestore',
+        'expire', 'expireat', 'pexpire', 'pexpireat', 'persist',
+        'flushdb', 'flushall', 'publish', 'spublish',
+        'xadd', 'xdel', 'xtrim', 'xack', 'xclaim', 'xautoclaim', 'xgroup', 'xsetid',
+        'pfadd', 'pfmerge', 'setbit', 'bitop', 'bitfield', 'geoadd', 'geosearchstore',
     ];
 
     public const REDIS_MUTATING_COMMANDS = [
-        'SET', 'SETEX', 'PSETEX', 'MSET', 'DEL', 'UNLINK', 'INCR', 'INCRBY', 'INCRBYFLOAT', 'DECR',
-        'DECRBY', 'HSET', 'HMSET', 'HDEL', 'HINCRBY', 'LPUSH', 'RPUSH', 'LPOP', 'RPOP', 'LTRIM',
-        'SADD', 'SREM', 'SMOVE', 'ZADD', 'ZINCRBY', 'ZREM', 'EXPIRE', 'PEXPIRE', 'PERSIST', 'FLUSHDB',
-        'FLUSHALL', 'PUBLISH', 'XADD', 'XDEL', 'XTRIM', 'PFADD', 'PFMERGE', 'SETBIT', 'BITOP', 'GEOADD',
+        'SET', 'SETEX', 'PSETEX', 'SETNX', 'MSET', 'MSETNX', 'SETRANGE', 'APPEND', 'GETSET', 'GETDEL', 'GETEX',
+        'DEL', 'UNLINK', 'RENAME', 'RENAMENX', 'COPY', 'MOVE', 'RESTORE', 'MIGRATE',
+        'INCR', 'INCRBY', 'INCRBYFLOAT', 'DECR', 'DECRBY',
+        'HSET', 'HSETNX', 'HMSET', 'HDEL', 'HINCRBY', 'HINCRBYFLOAT', 'HEXPIRE', 'HPEXPIRE', 'HEXPIREAT',
+        'HPEXPIREAT', 'HPERSIST',
+        'LPUSH', 'LPUSHX', 'RPUSH', 'RPUSHX', 'LPOP', 'RPOP', 'LSET', 'LINSERT', 'LREM', 'LTRIM', 'LMOVE',
+        'BLMOVE', 'RPOPLPUSH', 'BRPOPLPUSH', 'LMPOP', 'BLMPOP',
+        'SADD', 'SREM', 'SMOVE', 'SPOP', 'SINTERSTORE', 'SUNIONSTORE', 'SDIFFSTORE',
+        'ZADD', 'ZINCRBY', 'ZREM', 'ZREMRANGEBYRANK', 'ZREMRANGEBYSCORE', 'ZREMRANGEBYLEX', 'ZPOPMIN',
+        'ZPOPMAX', 'BZPOPMIN', 'BZPOPMAX', 'ZMPOP', 'BZMPOP', 'ZINTERSTORE', 'ZUNIONSTORE', 'ZDIFFSTORE',
+        'ZRANGESTORE',
+        'EXPIRE', 'EXPIREAT', 'PEXPIRE', 'PEXPIREAT', 'PERSIST',
+        'FLUSHDB', 'FLUSHALL', 'PUBLISH', 'SPUBLISH',
+        'XADD', 'XDEL', 'XTRIM', 'XACK', 'XCLAIM', 'XAUTOCLAIM', 'XGROUP', 'XSETID',
+        'PFADD', 'PFMERGE', 'SETBIT', 'BITOP', 'BITFIELD', 'GEOADD', 'GEOSEARCHSTORE',
     ];
 
     public const REDIS_READ_COMMANDS = [
