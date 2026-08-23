@@ -37,6 +37,9 @@ final class SourceScanner
     /** @var array<string, list<string>> */
     private array $facadeAliasCache = [];
 
+    /** @var array<string, list<array{fqcn:string,fallback:string}>> */
+    private array $facadeAliasTargets = [];
+
     /** @var array<int, list<string>> */
     private array $suppressionComments = [];
 
@@ -101,6 +104,7 @@ final class SourceScanner
         $this->statementCache = [];
         $this->statementCodeCache = [];
         $this->facadeAliasCache = [];
+        $this->facadeAliasTargets = [];
         $this->preScanFindings = [];
         $this->regexErrors = [];
 
@@ -137,6 +141,10 @@ final class SourceScanner
 
         $unique = [];
         foreach ($findings as $finding) {
+            $finding = RedisFindingRefiner::refine($finding);
+            if ($finding === null) {
+                continue;
+            }
             if (! $this->config->ruleEnabled($finding->rule)) {
                 continue;
             }
@@ -176,7 +184,7 @@ final class SourceScanner
                     continue;
                 }
 
-                $resolved = $this->context->resolve($class);
+                $resolved = $this->resolveClassAt($class, $offset);
                 $base = strtolower($this->basename($resolved));
                 if (in_array($base, ['event', 'bus', 'queue', 'mail', 'notification'], true)) {
                     continue;
@@ -405,7 +413,7 @@ final class SourceScanner
                     $singleInlineAfterCommit = count($jobClasses) === 1 && $this->statementContainsAfterCommit($statement);
 
                     foreach ($jobClasses as $jobClass) {
-                        $metadata = $this->classIndex->metadata($this->context->resolve($jobClass));
+                        $metadata = $this->classIndex->metadata($this->resolveClassAt($jobClass, $offset));
                         if ($metadata === null) {
                             $hasUnknown = true;
 
@@ -451,7 +459,7 @@ final class SourceScanner
                 if ($method === 'dispatch') {
                     $jobClass = $this->newClassFromStatement($statement);
                     $jobMetadata = $jobClass !== null
-                        ? $this->classIndex->metadata($this->context->resolve($jobClass))
+                        ? $this->classIndex->metadata($this->resolveClassAt($jobClass, $offset))
                         : null;
 
                     if ($jobMetadata !== null && ! $jobMetadata->queued()) {
@@ -546,7 +554,7 @@ final class SourceScanner
                 }
 
                 $jobClass = $this->newClassFromStatement($statement);
-                $jobMetadata = $jobClass !== null ? $this->classIndex->metadata($this->context->resolve($jobClass)) : null;
+                $jobMetadata = $jobClass !== null ? $this->classIndex->metadata($this->resolveClassAt($jobClass, $offset)) : null;
                 $jobExplicitlyBeforeCommit = $jobMetadata?->explicitlyBeforeCommit() === true;
                 $callMethod = $this->captured($match, 'method');
 
@@ -678,7 +686,7 @@ final class SourceScanner
                 $statement = $this->statementAt($offset);
                 $method = strtolower($this->captured($match, 'method'));
                 $class = $this->newClassFromStatement($statement);
-                $metadata = $class !== null ? $this->classIndex->metadata($this->context->resolve($class)) : null;
+                $metadata = $class !== null ? $this->classIndex->metadata($this->resolveClassAt($class, $offset)) : null;
                 $queued = in_array($method, ['queue', 'later'], true) || $metadata?->queued() === true;
 
                 $explicitlyBeforeCommit = $this->statementContainsBeforeCommit($statement) || $metadata?->explicitlyBeforeCommit() === true;
@@ -1010,7 +1018,7 @@ final class SourceScanner
                 continue;
             }
 
-            $resolved = $this->context->resolve($this->tokens[$name]['text']);
+            $resolved = $this->resolveClassAt($this->tokens[$name]['text'], $this->tokens[$name]['offset']);
         }
 
         return $resolved;
@@ -1116,6 +1124,20 @@ final class SourceScanner
                 continue;
             }
 
+            if ($handle['kind'] === 'redis') {
+                $kind = OperationCatalog::redisMethodKind($method);
+                if (in_array($kind, ['read', 'control'], true)) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                    'Redis state may be mutated through a locally assigned Redis connection while a database transaction is open.',
+                    'Move unknown Redis operations after commit or classify the command explicitly when it is read-only.',
+                    $kind === 'mutation' ? 'high' : 'medium');
+                $this->appendRetryFinding($findings, $offset, $tx, 'Redis operation');
+
+                continue;
+            }
+
             if ($handle['kind'] === 'process' && in_array($method, ['run', 'start', 'pipe', 'pool'], true)) {
                 $this->appendFinding($findings, $offset, 'TG009', Severity::Error,
                     'An external process is started through a locally assigned Laravel process handle while a database transaction is open.',
@@ -1191,6 +1213,9 @@ final class SourceScanner
             $resolved = null;
             foreach ($facades as $kind => [$fqcn, $fallback]) {
                 foreach ($this->facadeAliases($fqcn, $fallback) as $alias) {
+                    if (! $this->facadeAliasValidAt($alias, $fqcn, $fallback, $token['offset'])) {
+                        continue;
+                    }
                     $pattern = '/^\s*'.preg_quote($variable, '/').'\s*=\s*'.preg_quote($alias, '/').'\s*::/i';
                     if (preg_match($pattern, $code) !== 1) {
                         continue;
@@ -1388,7 +1413,43 @@ final class SourceScanner
         }
         $mutating = OperationCatalog::alternation(OperationCatalog::REDIS_MUTATIONS);
 
-        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Redis', 'Redis') as $alias) {
+        foreach ($this->facadeAliases('Illuminate\Support\Facades\Redis', 'Redis') as $alias) {
+            $directPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(/i';
+            foreach ($this->matches($directPattern) as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+                $method = strtolower($this->captured($match, 'method'));
+                $kind = OperationCatalog::redisMethodKind($method);
+                if (in_array($kind, ['read', 'control', 'mutation'], true)) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                    "Redis::{$method}() cannot be proven read-only while a database transaction is open.",
+                    'Move unknown Redis operations after commit or classify the command explicitly when it is read-only.', 'medium');
+                $this->appendRetryFinding($findings, $offset, $tx, "Redis {$method}");
+            }
+
+            $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\([^;]*?\)\s*->\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(/is';
+            foreach ($this->matches($connectionPattern) as $match) {
+                $offset = $match['offset'];
+                $tx = $this->eligibleTransaction($offset);
+                if ($tx === null) {
+                    continue;
+                }
+                $method = strtolower($this->captured($match, 'method'));
+                $kind = OperationCatalog::redisMethodKind($method);
+                if (in_array($kind, ['read', 'control', 'mutation'], true)) {
+                    continue;
+                }
+                $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                    "Redis connection method {$method}() cannot be proven read-only while a database transaction is open.",
+                    'Move unknown Redis operations after commit or classify the command explicitly when it is read-only.', 'medium');
+                $this->appendRetryFinding($findings, $offset, $tx, "Redis {$method}");
+            }
+
             $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::(?:(?!;).)*?\b(?P<method>'.$mutating.')\s*\(/is';
             foreach ($this->matches($pattern) as $match) {
                 $offset = $match['offset'];
@@ -1455,6 +1516,20 @@ final class SourceScanner
         $mutations = OperationCatalog::alternation(OperationCatalog::REDIS_MUTATIONS);
         if (preg_match('/->\s*(?:'.$mutations.')\s*\(/i', $code) === 1) {
             return [true, false];
+        }
+
+        if (preg_match_all('/->\s*(?<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(/i', $code, $calls, PREG_SET_ORDER) > 0) {
+            foreach ($calls as $call) {
+                $kind = OperationCatalog::redisMethodKind((string) ($call['method'] ?? ''));
+                if (in_array($kind, ['read', 'control'], true)) {
+                    continue;
+                }
+                if ($kind === 'mutation') {
+                    return [true, false];
+                }
+
+                return [false, true];
+            }
         }
 
         $hasInlineCallable = preg_match('/(?:pipeline|transaction)\s*\(\s*(?:static\s+)?(?:function|fn)\b/i', $code) === 1;
@@ -2369,6 +2444,9 @@ final class SourceScanner
             if (! $this->capturedMethodIsTopLevel($match)) {
                 continue;
             }
+            if (! $this->staticFacadeMatchUsesValidContext($pattern, $match, $offset)) {
+                continue;
+            }
             $result[] = ['offset' => $offset, 'matches' => $match];
         }
 
@@ -2837,7 +2915,7 @@ final class SourceScanner
         $normalized = ltrim($fqcn, '\\');
         $aliases = ['\\'.$normalized];
         foreach ($this->classIndex->contextsFor($this->file) as $context) {
-            $fallbackImport = $context->imports[$fallback] ?? null;
+            $fallbackImport = $context->importForAlias($fallback);
             if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
                 $aliases[] = $fallback;
             }
@@ -2848,7 +2926,84 @@ final class SourceScanner
             }
         }
 
-        return $this->facadeAliasCache[$cacheKey] = array_values(array_unique($aliases));
+        $aliases = array_values(array_unique($aliases));
+        foreach ($aliases as $alias) {
+            $this->registerFacadeAliasTarget($alias, $normalized, $fallback);
+        }
+
+        return $this->facadeAliasCache[$cacheKey] = $aliases;
+    }
+
+    private function registerFacadeAliasTarget(string $alias, string $fqcn, string $fallback): void
+    {
+        $key = strtolower(ltrim($alias, '\\'));
+        foreach ($this->facadeAliasTargets[$key] ?? [] as $target) {
+            if (strcasecmp($target['fqcn'], $fqcn) === 0 && strcasecmp($target['fallback'], $fallback) === 0) {
+                return;
+            }
+        }
+
+        $this->facadeAliasTargets[$key][] = ['fqcn' => $fqcn, 'fallback' => $fallback];
+    }
+
+    private function facadeAliasValidAt(string $alias, string $fqcn, string $fallback, int $offset): bool
+    {
+        return $this->facadeAliasValidInContext(
+            $alias,
+            $fqcn,
+            $fallback,
+            $this->classIndex->contextFor($this->file, $offset),
+        );
+    }
+
+    private function facadeAliasValidInContext(string $alias, string $fqcn, string $fallback, FileContext $context): bool
+    {
+        $normalized = ltrim($fqcn, '\\');
+        if (str_starts_with($alias, '\\')) {
+            return strcasecmp(ltrim($alias, '\\'), $normalized) === 0;
+        }
+
+        $import = $context->importForAlias($alias);
+        if ($import !== null) {
+            return strcasecmp(ltrim($import, '\\'), $normalized) === 0;
+        }
+
+        return strcasecmp($alias, $fallback) === 0;
+    }
+
+    /** @param array<int|string, mixed> $match */
+    private function staticFacadeMatchUsesValidContext(string $pattern, array $match, int $offset): bool
+    {
+        $full = $match[0] ?? null;
+        if (! is_array($full) || ! isset($full[0]) || ! is_string($full[0])) {
+            return true;
+        }
+        if (preg_match('/^\s*(?<alias>\\?[A-Za-z_][A-Za-z0-9_\\]*)\s*::/', $full[0], $aliasMatch) !== 1) {
+            return true;
+        }
+
+        $alias = $aliasMatch['alias'];
+        if (! str_contains($pattern, preg_quote($alias, '/'))) {
+            return true;
+        }
+
+        $targets = $this->facadeAliasTargets[strtolower(ltrim($alias, '\\'))] ?? [];
+        if ($targets === []) {
+            return true;
+        }
+
+        foreach ($targets as $target) {
+            if ($this->facadeAliasValidAt($alias, $target['fqcn'], $target['fallback'], $offset)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function resolveClassAt(string $class, int $offset): string
+    {
+        return $this->classIndex->contextFor($this->file, $offset)->resolve($class);
     }
 
     /** @param  list<Finding>  $findings */
