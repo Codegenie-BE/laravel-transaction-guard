@@ -53,7 +53,6 @@ final class SourceScanner
 
     private string $file = '';
 
-    private FileContext $context;
 
     public function __construct(
         private readonly ClassMetadataIndex $classIndex,
@@ -80,7 +79,6 @@ final class SourceScanner
 
         $this->source = $source;
         $this->file = $file;
-        $this->context = $this->classIndex->contextFor($file);
 
         try {
             $this->tokens = $this->tokenize($source);
@@ -1520,7 +1518,7 @@ final class SourceScanner
 
         if (preg_match_all('/->\s*(?<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(/i', $code, $calls, PREG_SET_ORDER) > 0) {
             foreach ($calls as $call) {
-                $kind = OperationCatalog::redisMethodKind((string) ($call['method'] ?? ''));
+                $kind = OperationCatalog::redisMethodKind((string) $call['method']);
                 if (in_array($kind, ['read', 'control'], true)) {
                     continue;
                 }
