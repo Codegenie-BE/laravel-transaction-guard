@@ -31,6 +31,7 @@ jobs:
       - name: Delete merged non-main branches
         shell: bash
         run: |
+          set -euo pipefail
           git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
 
           git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin \
@@ -45,14 +46,14 @@ jobs:
                 if git merge-base --is-ancestor "${branch_sha}" origin/main; then
                   merged=true
                 else
-                  merged_prs="$(gh pr list \
+                  exact_merged_prs="$(gh pr list \
                     --state merged \
                     --base main \
                     --head "${branch}" \
-                    --json number,headRepositoryOwner \
-                    --jq "[.[] | select(.headRepositoryOwner.login == \"${REPOSITORY_OWNER}\")] | length")"
+                    --json number,headRepositoryOwner,headRefOid \
+                    --jq "[.[] | select(.headRepositoryOwner.login == \"${REPOSITORY_OWNER}\" and .headRefOid == \"${branch_sha}\")] | length")"
 
-                  if [ "${merged_prs}" -gt 0 ]; then
+                  if [ "${exact_merged_prs}" -gt 0 ]; then
                     merged=true
                   fi
                 fi
@@ -66,6 +67,6 @@ jobs:
                     echo "Keeping ${branch}: its remote tip changed after validation."
                   fi
                 else
-                  echo "Keeping unmerged branch ${branch}."
+                  echo "Keeping unmerged or reused branch ${branch} at ${branch_sha}."
                 fi
               done
