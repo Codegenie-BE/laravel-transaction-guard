@@ -21,6 +21,11 @@ final readonly class FileContext
         $this->normalizedImports = $normalized;
     }
 
+    public function importForAlias(string $alias): ?string
+    {
+        return $this->normalizedImports[strtolower($alias)] ?? null;
+    }
+
     public function resolve(string $name): string
     {
         $name = trim($name);
@@ -39,7 +44,7 @@ final readonly class FileContext
         }
 
         [$first] = explode('\\', $name, 2);
-        $import = $this->normalizedImports[strtolower($first)] ?? null;
+        $import = $this->importForAlias($first);
         if ($import !== null) {
             $suffix = substr($name, strlen($first));
 
