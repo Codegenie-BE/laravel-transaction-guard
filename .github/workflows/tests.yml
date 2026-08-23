@@ -133,6 +133,46 @@ jobs:
       - name: Run static analysis on lowest dependencies
         run: composer analyse
 
+  lowest-laravel13:
+    name: Lowest supported Laravel 13 dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Pin lowest supported Laravel 13 test dependencies
+        run: composer require --dev 'orchestra/testbench:^11.0' 'pestphp/pest:^4.0' --no-update --no-interaction
+
+      - name: Resolve lowest supported Laravel 13 dependency set
+        run: composer update --prefer-lowest --prefer-stable --with-all-dependencies --no-interaction --no-progress
+
+      - name: Validate Composer metadata
+        run: composer validate --strict
+
+      - name: Audit lowest Laravel 13 dependency set
+        run: composer audit --no-interaction
+
+      - name: Validate optimized autoloading
+        run: composer dump-autoload --optimize --strict-psr --no-interaction
+
+      - name: Run dependency-free regression matrix
+        run: composer test:smoke
+
+      - name: Run Pest suite on lowest Laravel 13 dependencies
+        run: composer test
+
+      - name: Run static analysis on lowest Laravel 13 dependencies
+        run: composer analyse
+
   coverage:
     name: Coverage / PHP 8.5 / Laravel 13
     runs-on: ubuntu-latest
@@ -206,6 +246,7 @@ jobs:
     needs:
       - quality
       - lowest
+      - lowest-laravel13
       - coverage
       - distribution
     if: ${{ always() }}
@@ -217,11 +258,13 @@ jobs:
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
           LOWEST_RESULT: ${{ needs.lowest.result }}
+          LOWEST_LARAVEL13_RESULT: ${{ needs.lowest-laravel13.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           DISTRIBUTION_RESULT: ${{ needs.distribution.result }}
         shell: bash
         run: |
           test "${QUALITY_RESULT}" = 'success'
           test "${LOWEST_RESULT}" = 'success'
+          test "${LOWEST_LARAVEL13_RESULT}" = 'success'
           test "${COVERAGE_RESULT}" = 'success'
           test "${DISTRIBUTION_RESULT}" = 'success'
