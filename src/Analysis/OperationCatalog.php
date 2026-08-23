@@ -17,7 +17,7 @@ final class OperationCatalog
     public const RATE_LIMITER_MUTATIONS = ['attempt', 'hit', 'increment', 'decrement', 'clear', 'resetAttempts'];
 
     public const REDIS_MUTATIONS = [
-        'set', 'setex', 'psetex', 'setnx', 'mset', 'msetnx', 'setrange', 'append', 'getset', 'getdel', 'getex',
+        'set', 'setex', 'psetex', 'setnx', 'mset', 'msetnx', 'setrange', 'append', 'getset', 'getdel',
         'del', 'unlink', 'rename', 'renamenx', 'copy', 'move', 'restore', 'migrate',
         'incr', 'incrby', 'incrbyfloat', 'decr', 'decrby',
         'hset', 'hsetnx', 'hmset', 'hdel', 'hincrby', 'hincrbyfloat', 'hexpire', 'hpexpire', 'hexpireat',
@@ -35,7 +35,7 @@ final class OperationCatalog
     ];
 
     public const REDIS_MUTATING_COMMANDS = [
-        'SET', 'SETEX', 'PSETEX', 'SETNX', 'MSET', 'MSETNX', 'SETRANGE', 'APPEND', 'GETSET', 'GETDEL', 'GETEX',
+        'SET', 'SETEX', 'PSETEX', 'SETNX', 'MSET', 'MSETNX', 'SETRANGE', 'APPEND', 'GETSET', 'GETDEL',
         'DEL', 'UNLINK', 'RENAME', 'RENAMENX', 'COPY', 'MOVE', 'RESTORE', 'MIGRATE',
         'INCR', 'INCRBY', 'INCRBYFLOAT', 'DECR', 'DECRBY',
         'HSET', 'HSETNX', 'HMSET', 'HDEL', 'HINCRBY', 'HINCRBYFLOAT', 'HEXPIRE', 'HPEXPIRE', 'HEXPIREAT',
