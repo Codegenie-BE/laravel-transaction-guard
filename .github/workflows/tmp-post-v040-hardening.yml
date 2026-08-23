@@ -1,0 +1,478 @@
+name: Temporary post-v0.4 analyzer hardening
+
+on:
+  push:
+    branches:
+      - hardening/post-v040-audit
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: hardening/post-v040-audit
+
+      - name: Apply analyzer patches
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          scanner_path = Path('src/Analysis/SourceScanner.php')
+          source = scanner_path.read_text()
+
+          old = '''    /** @var array<string, list<string>> */
+              private array $facadeAliasCache = [];
+          '''.replace('              ', '    ')
+          new = '''    /** @var array<string, list<string>> */
+              private array $facadeAliasCache = [];
+
+              /** @var array<string, list<array{fqcn:string,fallback:string}>> */
+              private array $facadeAliasTargets = [];
+          '''.replace('              ', '    ')
+          assert source.count(old) == 1, source.count(old)
+          source = source.replace(old, new, 1)
+
+          old = '''        $this->facadeAliasCache = [];
+              $this->preScanFindings = [];
+          '''.replace('              ', '        ')
+          new = '''        $this->facadeAliasCache = [];
+              $this->facadeAliasTargets = [];
+              $this->preScanFindings = [];
+          '''.replace('              ', '        ')
+          assert source.count(old) == 1
+          source = source.replace(old, new, 1)
+
+          old = '''        foreach ($findings as $finding) {
+              if (! $this->config->ruleEnabled($finding->rule)) {
+          '''.replace('              ', '            ')
+          new = '''        foreach ($findings as $finding) {
+              $finding = RedisFindingRefiner::refine($finding);
+              if ($finding === null) {
+                  continue;
+              }
+              if (! $this->config->ruleEnabled($finding->rule)) {
+          '''.replace('              ', '            ')
+          assert source.count(old) == 1
+          source = source.replace(old, new, 1)
+
+          source = source.replace('$resolved = $this->context->resolve($class);', '$resolved = $this->resolveClassAt($class, $offset);')
+          source = source.replace('$this->classIndex->metadata($this->context->resolve($jobClass))', '$this->classIndex->metadata($this->resolveClassAt($jobClass, $offset))')
+          source = source.replace('$this->classIndex->metadata($this->context->resolve($class))', '$this->classIndex->metadata($this->resolveClassAt($class, $offset))')
+          source = source.replace("$resolved = $this->context->resolve($this->tokens[$name]['text']);", "$resolved = $this->resolveClassAt($this->tokens[$name]['text'], $this->tokens[$name]['offset']);")
+          assert '$this->context->resolve(' not in source
+
+          old = '''            if (! $this->capturedMethodIsTopLevel($match)) {
+                  continue;
+              }
+              $result[] = ['offset' => $offset, 'matches' => $match];
+          '''.replace('              ', '            ')
+          new = '''            if (! $this->capturedMethodIsTopLevel($match)) {
+                  continue;
+              }
+              if (! $this->staticFacadeMatchUsesValidContext($match, $offset)) {
+                  continue;
+              }
+              $result[] = ['offset' => $offset, 'matches' => $match];
+          '''.replace('              ', '            ')
+          assert source.count(old) == 1
+          source = source.replace(old, new, 1)
+
+          start = source.index('    /** @return list<string> */\n    private function facadeAliases(string $fqcn, string $fallback): array\n')
+          end = source.index('    /** @param  list<Finding>  $findings */\n    private function appendExplicitBeforeCommitFinding', start)
+          replacement = r'''    /** @return list<string> */
+              private function facadeAliases(string $fqcn, string $fallback): array
+              {
+                  $cacheKey = strtolower(ltrim($fqcn, '\\')).'|'.$fallback;
+                  if (isset($this->facadeAliasCache[$cacheKey])) {
+                      return $this->facadeAliasCache[$cacheKey];
+                  }
+
+                  $normalized = ltrim($fqcn, '\\');
+                  $aliases = ['\\'.$normalized];
+                  foreach ($this->classIndex->contextsFor($this->file) as $context) {
+                      $fallbackImport = $context->importForAlias($fallback);
+                      if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
+                          $aliases[] = $fallback;
+                      }
+                      foreach ($context->imports as $alias => $import) {
+                          if (strcasecmp(ltrim($import, '\\'), $normalized) === 0) {
+                              $aliases[] = $alias;
+                          }
+                      }
+                  }
+
+                  $aliases = array_values(array_unique($aliases));
+                  foreach ($aliases as $alias) {
+                      $this->registerFacadeAliasTarget($alias, $normalized, $fallback);
+                  }
+
+                  return $this->facadeAliasCache[$cacheKey] = $aliases;
+              }
+
+              private function registerFacadeAliasTarget(string $alias, string $fqcn, string $fallback): void
+              {
+                  $key = strtolower(ltrim($alias, '\\'));
+                  foreach ($this->facadeAliasTargets[$key] ?? [] as $target) {
+                      if (strcasecmp($target['fqcn'], $fqcn) === 0 && strcasecmp($target['fallback'], $fallback) === 0) {
+                          return;
+                      }
+                  }
+
+                  $this->facadeAliasTargets[$key][] = ['fqcn' => $fqcn, 'fallback' => $fallback];
+              }
+
+              private function facadeAliasValidAt(string $alias, string $fqcn, string $fallback, int $offset): bool
+              {
+                  return $this->facadeAliasValidInContext(
+                      $alias,
+                      $fqcn,
+                      $fallback,
+                      $this->classIndex->contextFor($this->file, $offset),
+                  );
+              }
+
+              private function facadeAliasValidInContext(string $alias, string $fqcn, string $fallback, FileContext $context): bool
+              {
+                  $normalized = ltrim($fqcn, '\\');
+                  if (str_starts_with($alias, '\\')) {
+                      return strcasecmp(ltrim($alias, '\\'), $normalized) === 0;
+                  }
+
+                  $import = $context->importForAlias($alias);
+                  if ($import !== null) {
+                      return strcasecmp(ltrim($import, '\\'), $normalized) === 0;
+                  }
+
+                  return strcasecmp($alias, $fallback) === 0;
+              }
+
+              /** @param array<int|string, mixed> $match */
+              private function staticFacadeMatchUsesValidContext(array $match, int $offset): bool
+              {
+                  $full = $match[0] ?? null;
+                  if (! is_array($full) || ! isset($full[0]) || ! is_string($full[0])) {
+                      return true;
+                  }
+                  if (preg_match('/^\s*(?<alias>\\\\?[A-Za-z_][A-Za-z0-9_\\\\]*)\s*::/', $full[0], $aliasMatch) !== 1) {
+                      return true;
+                  }
+
+                  $alias = $aliasMatch['alias'];
+                  $targets = $this->facadeAliasTargets[strtolower(ltrim($alias, '\\'))] ?? [];
+                  if ($targets === []) {
+                      return true;
+                  }
+
+                  foreach ($targets as $target) {
+                      if ($this->facadeAliasValidAt($alias, $target['fqcn'], $target['fallback'], $offset)) {
+                          return true;
+                      }
+                  }
+
+                  return false;
+              }
+
+              private function resolveClassAt(string $class, int $offset): string
+              {
+                  return $this->classIndex->contextFor($this->file, $offset)->resolve($class);
+              }
+
+          '''.replace('              ', '    ')
+          source = source[:start] + replacement + source[end:]
+
+          old = '''                foreach ($this->facadeAliases($fqcn, $fallback) as $alias) {
+                      $pattern = '/^\\s*'.preg_quote($variable, '/').'\\s*=\\s*'.preg_quote($alias, '/').'\\s*::/i';
+          '''.replace('                      ', '                    ')
+          new = '''                foreach ($this->facadeAliases($fqcn, $fallback) as $alias) {
+                      if (! $this->facadeAliasValidAt($alias, $fqcn, $fallback, $token['offset'])) {
+                          continue;
+                      }
+                      $pattern = '/^\\s*'.preg_quote($variable, '/').'\\s*=\\s*'.preg_quote($alias, '/').'\\s*::/i';
+          '''.replace('                      ', '                    ')
+          assert source.count(old) == 1
+          source = source.replace(old, new, 1)
+
+          old = '''        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
+              $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::\\s*connection\\s*\\(/i';
+          '''.replace('              ', '            ')
+          new = '''        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Queue', 'Queue') as $alias) {
+              if (! $this->facadeAliasValidInContext($alias, 'Illuminate\\Support\\Facades\\Queue', 'Queue', $this->context)) {
+                  continue;
+              }
+              $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::\\s*connection\\s*\\(/i';
+          '''.replace('              ', '            ')
+          assert source.count(old) == 1
+          source = source.replace(old, new, 1)
+
+          redis_anchor = "        foreach ($this->facadeAliases('Illuminate\\\\Support\\\\Facades\\\\Redis', 'Redis') as $alias) {\n            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\\\s*::(?:(?!;).)*?\\\\b(?P<method>'.$mutating.')\\\\s*\\\\(/is';"
+          if redis_anchor not in source:
+              redis_anchor = "        foreach ($this->facadeAliases('Illuminate\\Support\\Facades\\Redis', 'Redis') as $alias) {\n            $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\\s*::(?:(?!;).)*?\\b(?P<method>'.$mutating.')\\s*\\(/is';"
+          assert redis_anchor in source
+          redis_prefix = r'''        foreach ($this->facadeAliases('Illuminate\Support\Facades\Redis', 'Redis') as $alias) {
+              $directPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(/i';
+              foreach ($this->matches($directPattern) as $match) {
+                  $offset = $match['offset'];
+                  $tx = $this->eligibleTransaction($offset);
+                  if ($tx === null) {
+                      continue;
+                  }
+                  $method = strtolower($this->captured($match, 'method'));
+                  $kind = OperationCatalog::redisMethodKind($method);
+                  if (in_array($kind, ['read', 'control', 'mutation'], true)) {
+                      continue;
+                  }
+                  $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                      "Redis::{$method}() cannot be proven read-only while a database transaction is open.",
+                      'Move unknown Redis operations after commit or classify the command explicitly when it is read-only.', 'medium');
+                  $this->appendRetryFinding($findings, $offset, $tx, "Redis {$method}");
+              }
+
+              $connectionPattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::\s*connection\s*\([^;]*?\)\s*->\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*\(/is';
+              foreach ($this->matches($connectionPattern) as $match) {
+                  $offset = $match['offset'];
+                  $tx = $this->eligibleTransaction($offset);
+                  if ($tx === null) {
+                      continue;
+                  }
+                  $method = strtolower($this->captured($match, 'method'));
+                  $kind = OperationCatalog::redisMethodKind($method);
+                  if (in_array($kind, ['read', 'control', 'mutation'], true)) {
+                      continue;
+                  }
+                  $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                      "Redis connection method {$method}() cannot be proven read-only while a database transaction is open.",
+                      'Move unknown Redis operations after commit or classify the command explicitly when it is read-only.', 'medium');
+                  $this->appendRetryFinding($findings, $offset, $tx, "Redis {$method}");
+              }
+
+              $pattern = '/(?<![A-Za-z0-9_])'.preg_quote($alias, '/').'\s*::(?:(?!;).)*?\b(?P<method>'.$mutating.')\s*\(/is';'''.replace('              ', '            ')
+          source = source.replace(redis_anchor, redis_prefix, 1)
+
+          old = '''            if ($handle['kind'] === 'redis' && in_array($method, ['pipeline', 'transaction'], true)) {
+              [$mutates, $unknown] = $this->redisCallbackMutationState($this->statementAt($offset));
+              if ($mutates || $unknown) {
+                  $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                      $mutates
+                          ? 'A Redis pipeline/transaction callback mutates Redis while a database transaction is open.'
+                          : 'A Redis pipeline/transaction callback cannot be proven read-only while a database transaction is open.',
+                      'Keep Redis callback mutations after the database commit.', $mutates ? 'high' : 'medium');
+                  $this->appendRetryFinding($findings, $offset, $tx, 'Redis callback mutation');
+              }
+
+              continue;
+          }
+
+              if ($handle['kind'] === 'process' && in_array($method, ['run', 'start', 'pipe', 'pool'], true)) {
+          '''.replace('              ', '            ')
+          new = '''            if ($handle['kind'] === 'redis' && in_array($method, ['pipeline', 'transaction'], true)) {
+              [$mutates, $unknown] = $this->redisCallbackMutationState($this->statementAt($offset));
+              if ($mutates || $unknown) {
+                  $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                      $mutates
+                          ? 'A Redis pipeline/transaction callback mutates Redis while a database transaction is open.'
+                          : 'A Redis pipeline/transaction callback cannot be proven read-only while a database transaction is open.',
+                      'Keep Redis callback mutations after the database commit.', $mutates ? 'high' : 'medium');
+                  $this->appendRetryFinding($findings, $offset, $tx, 'Redis callback mutation');
+              }
+
+              continue;
+          }
+
+              if ($handle['kind'] === 'redis') {
+              $kind = OperationCatalog::redisMethodKind($method);
+              if (in_array($kind, ['read', 'control'], true)) {
+                  continue;
+              }
+              $this->appendFinding($findings, $offset, 'TG020', Severity::Warning,
+                  'Redis state may be mutated through a locally assigned Redis connection while a database transaction is open.',
+                  'Move unknown Redis operations after commit or classify the command explicitly when it is read-only.',
+                  $kind === 'mutation' ? 'high' : 'medium');
+              $this->appendRetryFinding($findings, $offset, $tx, 'Redis operation');
+
+              continue;
+          }
+
+              if ($handle['kind'] === 'process' && in_array($method, ['run', 'start', 'pipe', 'pool'], true)) {
+          '''.replace('              ', '            ')
+          assert source.count(old) == 1
+          source = source.replace(old, new, 1)
+
+          old = '''        if (preg_match('/->\\s*(?:'.$mutations.')\\s*\\(/i', $code) === 1) {
+              return [true, false];
+          }
+
+              $hasInlineCallable = preg_match('/(?:pipeline|transaction)\\s*\\(\\s*(?:static\\s+)?(?:function|fn)\\b/i', $code) === 1;
+          '''.replace('              ', '        ')
+          new = '''        if (preg_match('/->\\s*(?:'.$mutations.')\\s*\\(/i', $code) === 1) {
+              return [true, false];
+          }
+
+              if (preg_match_all('/->\\s*(?<method>[A-Za-z_][A-Za-z0-9_]*)\\s*\\(/i', $code, $calls, PREG_SET_ORDER) > 0) {
+              foreach ($calls as $call) {
+                  $kind = OperationCatalog::redisMethodKind((string) ($call['method'] ?? ''));
+                  if (in_array($kind, ['read', 'control'], true)) {
+                      continue;
+                  }
+                  if ($kind === 'mutation') {
+                      return [true, false];
+                  }
+
+                  return [false, true];
+              }
+          }
+
+              $hasInlineCallable = preg_match('/(?:pipeline|transaction)\\s*\\(\\s*(?:static\\s+)?(?:function|fn)\\b/i', $code) === 1;
+          '''.replace('              ', '        ')
+          assert source.count(old) == 1
+          source = source.replace(old, new, 1)
+
+          scanner_path.write_text(source)
+
+          metadata_path = Path('src/Analysis/ClassMetadataIndex.php')
+          metadata = metadata_path.read_text()
+
+          old = r'''    /** @return array<string, string> */
+              public function notificationChannelConnections(string $class): array
+              {
+                  $key = strtolower(ltrim($class, '\\'));
+                  if (array_key_exists($key, $this->notificationChannelConnections)) {
+                      return $this->notificationChannelConnections[$key];
+                  }
+
+                  $metadata = $this->metadata($class);
+                  if ($metadata?->parent === null) {
+                      return [];
+                  }
+
+                  return $this->notificationChannelConnections($metadata->parent);
+              }
+
+              public function modelConnection(string $class): ?string
+              {
+                  $key = strtolower(ltrim($class, '\\'));
+                  if (array_key_exists($key, $this->modelConnections)) {
+                      return $this->modelConnections[$key];
+                  }
+
+                  $metadata = $this->metadata($class);
+                  if ($metadata?->parent === null) {
+                      return null;
+                  }
+
+                  return $this->modelConnection($metadata->parent);
+              }
+
+              public function modelRelationTarget(string $class, string $relation): ?string
+              {
+                  $key = strtolower(ltrim($class, '\\'));
+                  $relation = strtolower($relation);
+                  if (isset($this->modelRelations[$key][$relation])) {
+                      return $this->modelRelations[$key][$relation];
+                  }
+
+                  $metadata = $this->metadata($class);
+
+                  return $metadata?->parent !== null ? $this->modelRelationTarget($metadata->parent, $relation) : null;
+              }
+          '''.replace('              ', '    ')
+          new = r'''    /** @return array<string, string> */
+              public function notificationChannelConnections(string $class): array
+              {
+                  $seen = [];
+                  $current = ltrim($class, '\\');
+
+                  while ($current !== '') {
+                      $key = strtolower($current);
+                      if (isset($seen[$key])) {
+                          return [];
+                      }
+                      $seen[$key] = true;
+                      if (array_key_exists($key, $this->notificationChannelConnections)) {
+                          return $this->notificationChannelConnections[$key];
+                      }
+
+                      $metadata = $this->metadata($current);
+                      if ($metadata?->parent === null) {
+                          return [];
+                      }
+                      $current = ltrim($metadata->parent, '\\');
+                  }
+
+                  return [];
+              }
+
+              public function modelConnection(string $class): ?string
+              {
+                  $seen = [];
+                  $current = ltrim($class, '\\');
+
+                  while ($current !== '') {
+                      $key = strtolower($current);
+                      if (isset($seen[$key])) {
+                          return null;
+                      }
+                      $seen[$key] = true;
+                      if (array_key_exists($key, $this->modelConnections)) {
+                          return $this->modelConnections[$key];
+                      }
+
+                      $metadata = $this->metadata($current);
+                      if ($metadata?->parent === null) {
+                          return null;
+                      }
+                      $current = ltrim($metadata->parent, '\\');
+                  }
+
+                  return null;
+              }
+
+              public function modelRelationTarget(string $class, string $relation): ?string
+              {
+                  $seen = [];
+                  $current = ltrim($class, '\\');
+                  $relation = strtolower($relation);
+
+                  while ($current !== '') {
+                      $key = strtolower($current);
+                      if (isset($seen[$key])) {
+                          return null;
+                      }
+                      $seen[$key] = true;
+                      if (isset($this->modelRelations[$key][$relation])) {
+                          return $this->modelRelations[$key][$relation];
+                      }
+
+                      $metadata = $this->metadata($current);
+                      if ($metadata?->parent === null) {
+                          return null;
+                      }
+                      $current = ltrim($metadata->parent, '\\');
+                  }
+
+                  return null;
+              }
+          '''.replace('              ', '    ')
+          assert metadata.count(old) == 1
+          metadata = metadata.replace(old, new, 1)
+
+          old = "$fallbackImport = $context->imports[$fallback] ?? null;"
+          assert metadata.count(old) == 1
+          metadata = metadata.replace(old, "$fallbackImport = $context->importForAlias($fallback);", 1)
+          metadata_path.write_text(metadata)
+          PY
+
+      - name: Commit analyzer patch
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/Analysis/SourceScanner.php src/Analysis/ClassMetadataIndex.php
+          git commit -m 'fix: harden analyzer context and Redis coverage'
+          git push origin HEAD:hardening/post-v040-audit
