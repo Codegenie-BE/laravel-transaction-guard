@@ -16,11 +16,13 @@ final class OperationCatalog
 
     public const RATE_LIMITER_MUTATIONS = ['attempt', 'hit', 'increment', 'decrement', 'clear', 'resetAttempts'];
 
+    public const REDIS_CONTROL_METHODS = ['connection', 'command', 'pipeline', 'transaction'];
+
     public const REDIS_MUTATIONS = [
         'set', 'setex', 'psetex', 'setnx', 'mset', 'msetnx', 'setrange', 'append', 'getset', 'getdel', 'getex',
-        'del', 'unlink', 'rename', 'renamenx', 'copy', 'move', 'restore', 'migrate',
+        'del', 'delex', 'unlink', 'rename', 'renamenx', 'copy', 'move', 'restore', 'migrate',
         'incr', 'incrby', 'incrbyfloat', 'decr', 'decrby',
-        'hset', 'hsetnx', 'hmset', 'hdel', 'hincrby', 'hincrbyfloat', 'hexpire', 'hpexpire', 'hexpireat',
+        'hset', 'hsetnx', 'hmset', 'hdel', 'hgetdel', 'hsetex', 'hincrby', 'hincrbyfloat', 'hexpire', 'hpexpire', 'hexpireat',
         'hpexpireat', 'hpersist',
         'lpush', 'lpushx', 'rpush', 'rpushx', 'lpop', 'rpop', 'lset', 'linsert', 'lrem', 'ltrim', 'lmove',
         'blmove', 'rpoplpush', 'brpoplpush', 'lmpop', 'blmpop',
@@ -30,15 +32,15 @@ final class OperationCatalog
         'zrangestore',
         'expire', 'expireat', 'pexpire', 'pexpireat', 'persist',
         'flushdb', 'flushall', 'publish', 'spublish',
-        'xadd', 'xdel', 'xtrim', 'xack', 'xclaim', 'xautoclaim', 'xgroup', 'xsetid',
+        'xadd', 'xdel', 'xdelex', 'xack', 'xackdel', 'xtrim', 'xclaim', 'xautoclaim', 'xgroup', 'xsetid',
         'pfadd', 'pfmerge', 'setbit', 'bitop', 'bitfield', 'geoadd', 'geosearchstore',
     ];
 
     public const REDIS_MUTATING_COMMANDS = [
         'SET', 'SETEX', 'PSETEX', 'SETNX', 'MSET', 'MSETNX', 'SETRANGE', 'APPEND', 'GETSET', 'GETDEL', 'GETEX',
-        'DEL', 'UNLINK', 'RENAME', 'RENAMENX', 'COPY', 'MOVE', 'RESTORE', 'MIGRATE',
+        'DEL', 'DELEX', 'UNLINK', 'RENAME', 'RENAMENX', 'COPY', 'MOVE', 'RESTORE', 'MIGRATE',
         'INCR', 'INCRBY', 'INCRBYFLOAT', 'DECR', 'DECRBY',
-        'HSET', 'HSETNX', 'HMSET', 'HDEL', 'HINCRBY', 'HINCRBYFLOAT', 'HEXPIRE', 'HPEXPIRE', 'HEXPIREAT',
+        'HSET', 'HSETNX', 'HMSET', 'HDEL', 'HGETDEL', 'HSETEX', 'HINCRBY', 'HINCRBYFLOAT', 'HEXPIRE', 'HPEXPIRE', 'HEXPIREAT',
         'HPEXPIREAT', 'HPERSIST',
         'LPUSH', 'LPUSHX', 'RPUSH', 'RPUSHX', 'LPOP', 'RPOP', 'LSET', 'LINSERT', 'LREM', 'LTRIM', 'LMOVE',
         'BLMOVE', 'RPOPLPUSH', 'BRPOPLPUSH', 'LMPOP', 'BLMPOP',
@@ -48,14 +50,20 @@ final class OperationCatalog
         'ZRANGESTORE',
         'EXPIRE', 'EXPIREAT', 'PEXPIRE', 'PEXPIREAT', 'PERSIST',
         'FLUSHDB', 'FLUSHALL', 'PUBLISH', 'SPUBLISH',
-        'XADD', 'XDEL', 'XTRIM', 'XACK', 'XCLAIM', 'XAUTOCLAIM', 'XGROUP', 'XSETID',
+        'XADD', 'XDEL', 'XDELEX', 'XACK', 'XACKDEL', 'XTRIM', 'XCLAIM', 'XAUTOCLAIM', 'XGROUP', 'XSETID',
         'PFADD', 'PFMERGE', 'SETBIT', 'BITOP', 'BITFIELD', 'GEOADD', 'GEOSEARCHSTORE',
     ];
 
     public const REDIS_READ_COMMANDS = [
-        'GET', 'MGET', 'EXISTS', 'TTL', 'PTTL', 'HGET', 'HGETALL', 'HMGET', 'HLEN', 'LRANGE', 'LLEN',
-        'SCARD', 'SMEMBERS', 'SISMEMBER', 'ZRANGE', 'ZREVRANGE', 'ZSCORE', 'ZCARD', 'XRANGE', 'XREVRANGE',
-        'XLEN', 'PFCOUNT', 'GETBIT', 'BITCOUNT', 'GEODIST', 'GEOHASH', 'GEOPOS', 'TYPE', 'PING',
+        'GET', 'MGET', 'GETRANGE', 'STRLEN', 'EXISTS', 'TTL', 'PTTL', 'EXPIRETIME', 'PEXPIRETIME', 'TYPE', 'PING', 'ECHO',
+        'HGET', 'HGETALL', 'HMGET', 'HLEN', 'HEXISTS', 'HKEYS', 'HVALS', 'HSTRLEN', 'HEXPIRETIME', 'HPEXPIRETIME',
+        'LRANGE', 'LLEN', 'LINDEX', 'LPOS',
+        'SCARD', 'SMEMBERS', 'SISMEMBER', 'SMISMEMBER', 'SRANDMEMBER',
+        'ZRANGE', 'ZREVRANGE', 'ZSCORE', 'ZMSCORE', 'ZCARD', 'ZCOUNT', 'ZLEXCOUNT', 'ZRANK', 'ZREVRANK',
+        'XRANGE', 'XREVRANGE', 'XLEN', 'XPENDING',
+        'PFCOUNT', 'GETBIT', 'BITCOUNT', 'BITPOS',
+        'GEODIST', 'GEOHASH', 'GEOPOS', 'GEOSEARCH',
+        'DBSIZE', 'RANDOMKEY', 'KEYS', 'SCAN', 'SSCAN', 'HSCAN', 'ZSCAN',
     ];
 
     public const REDIS_SCRIPT_COMMANDS = ['EVAL', 'EVALSHA', 'FCALL'];
@@ -103,5 +111,15 @@ final class OperationCatalog
         }
 
         return 'unknown';
+    }
+
+    public static function redisMethodKind(string $method): string
+    {
+        $method = strtolower($method);
+        if (in_array($method, self::REDIS_CONTROL_METHODS, true)) {
+            return 'control';
+        }
+
+        return self::redisCommandKind($method);
     }
 }
