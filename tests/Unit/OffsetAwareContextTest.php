@@ -135,23 +135,23 @@ PHP);
     expect($httpFindings)->toBe([]);
 });
 
-it('does not suppress generic static event analysis because another namespace uses the same facade alias', function (): void {
+it('does not suppress generic static job analysis because another namespace uses the same facade alias', function (): void {
     $findings = analyzeOffsetAwareFixture(<<<'PHP'
 <?php
 namespace App\First;
-use Illuminate\Support\Facades\Event as Emitter;
+use Illuminate\Support\Facades\Event as Task;
 
 namespace App\Second;
-use Illuminate\Foundation\Events\Dispatchable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\DB;
-class Emitter { use Dispatchable; }
-DB::transaction(fn () => Emitter::dispatch());
+class Task implements ShouldQueue {}
+DB::transaction(fn () => Task::dispatch());
 PHP);
 
-    $events = array_values(array_filter(
+    $jobs = array_values(array_filter(
         $findings,
-        static fn ($finding): bool => $finding->rule === 'TG002',
+        static fn ($finding): bool => $finding->rule === 'TG001',
     ));
 
-    expect($events)->toHaveCount(1);
+    expect($jobs)->toHaveCount(1);
 });
