@@ -18,9 +18,13 @@ final class MetadataAttributeResolver
             return false;
         }
 
-        $aliases = [$fallback, '\\'.ltrim($fqcn, '\\')];
+        $normalized = ltrim($fqcn, '\\');
+        $aliases = ['\\'.$normalized];
+        if (strcasecmp(ltrim($context->resolve($fallback), '\\'), $normalized) === 0) {
+            $aliases[] = $fallback;
+        }
         foreach ($context->imports as $alias => $import) {
-            if (strcasecmp(ltrim($import, '\\'), ltrim($fqcn, '\\')) === 0) {
+            if (strcasecmp(ltrim($import, '\\'), $normalized) === 0) {
                 $aliases[] = $alias;
             }
         }
