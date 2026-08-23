@@ -10,6 +10,8 @@ foreach ([
     'src/Analysis/AnalysisConfig.php',
     'src/Analysis/ClassMetadata.php',
     'src/Analysis/OperationCatalog.php',
+    'src/Analysis/RedisOperationClassifier.php',
+    'src/Analysis/RedisFindingRefiner.php',
     'src/Analysis/DatabaseDriverPolicy.php',
     'src/Analysis/StaticExpressionResolver.php',
     'src/Analysis/MetadataAttributeResolver.php',
