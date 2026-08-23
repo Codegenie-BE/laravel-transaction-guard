@@ -6,9 +6,11 @@ require_once dirname(__DIR__).'/src/Analysis/RuleCatalog.php';
 
 use Codegenie\TransactionGuard\Analysis\RuleCatalog;
 
-$rules = file_get_contents(dirname(__DIR__).'/docs/RULES.md');
-$readme = file_get_contents(dirname(__DIR__).'/README.md');
-if ($rules === false || $readme === false) {
+$root = dirname(__DIR__);
+$rules = file_get_contents($root.'/docs/RULES.md');
+$readme = file_get_contents($root.'/README.md');
+$changelog = file_get_contents($root.'/CHANGELOG.md');
+if ($rules === false || $readme === false || $changelog === false) {
     fwrite(STDERR, "Unable to read documentation.\n");
     exit(1);
 }
@@ -28,9 +30,30 @@ foreach (RuleCatalog::ids() as $id) {
     }
 }
 
+preg_match_all('/^## \[([^]]+)](?: - ([0-9]{4}-[0-9]{2}-[0-9]{2}))?$/m', $changelog, $headings, PREG_SET_ORDER);
+if ($headings === [] || ($headings[0][1] ?? null) !== 'Unreleased') {
+    $failed[] = 'CHANGELOG.md must keep [Unreleased] as the first release heading.';
+}
+$unreleased = array_values(array_filter(
+    $headings,
+    static fn (array $heading): bool => ($heading[1] ?? null) === 'Unreleased',
+));
+if (count($unreleased) !== 1) {
+    $failed[] = 'CHANGELOG.md must contain exactly one [Unreleased] heading.';
+}
+foreach ($headings as $heading) {
+    $name = $heading[1] ?? '';
+    if ($name === 'Unreleased') {
+        continue;
+    }
+    if (preg_match('/^v\d+\.\d+\.\d+$/', $name) !== 1 || ($heading[2] ?? '') === '') {
+        $failed[] = "CHANGELOG.md release heading [{$name}] must be a dated vX.Y.Z entry.";
+    }
+}
+
 if ($failed !== []) {
     fwrite(STDERR, implode("\n", $failed)."\n");
     exit(1);
 }
 
-fwrite(STDOUT, "Rule documentation is synchronized.\n");
+fwrite(STDOUT, "Rule documentation and changelog structure are synchronized.\n");

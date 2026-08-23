@@ -11,6 +11,8 @@ The executable matrix is the source of truth for the exact scenario count. It is
 - simple local closure variables passed to `DB::transaction()` plus unresolved-callback diagnostics;
 - `DB::connection(...)->transaction()`;
 - facade aliases;
+- namespace-local facade aliases in files containing multiple or bracketed namespaces;
+- case-insensitive PHP import aliases without leaking bindings between namespaces;
 - manual begin/commit/rollback, balanced per database connection;
 - statically known cross-connection writes (`TG021`);
 - try/catch rollback paths;
@@ -25,6 +27,7 @@ The executable matrix is the source of truth for the exact scenario count. It is
 - regular queued jobs;
 - `ShouldQueueAfterCommit`;
 - inherited `ShouldQueueAfterCommit`;
+- same short job names in different namespaces with different queue contracts;
 - constructor `afterCommit()` and `beforeCommit()`;
 - statement-level `afterCommit()` / `beforeCommit()`;
 - default queue `after_commit` configuration;
@@ -41,7 +44,8 @@ The executable matrix is the source of truth for the exact scenario count. It is
 - current Laravel 13 route-array connection-first runtime semantics;
 - parent/interface and recursive trait routes;
 - `Queue::forward()` with queue attributes / constructor queue names;
-- queued closures, pending chains, raw queue pushes and explicit connection precedence over route configuration.
+- queued closures, pending chains, raw queue pushes and explicit connection precedence over route configuration;
+- cyclic malformed metadata graphs terminate safely instead of recursing indefinitely.
 
 ## Events, mail, notifications, broadcasts
 
@@ -62,7 +66,11 @@ The executable matrix is the source of truth for the exact scenario count. It is
 - native filesystem mutations;
 - modern cache writes/invalidation (`putMany`, `remember*`, `flexible`, etc.);
 - Redis mutations, commands, increments, publishes, pipelines/transactions;
-- Redis read-only calls that should remain clean;
+- modern Redis write commands such as `DELEX`, `HGETDEL`, `HSETEX`, `XDELEX` and `XACKDEL`;
+- known Redis read-only methods that should remain clean;
+- unknown methods on proven Redis receivers reported conservatively rather than silently ignored;
+- Redis `GETEX` raw/Predis positional forms and Laravel-default PhpRedis options-array forms;
+- read-only `GETEX` versus expiry-changing `EX`, `PX`, `EXAT`, `PXAT` and `PERSIST` behavior;
 - external processes/shell execution;
 - Laravel concurrency/deferred execution;
 - locally assigned HTTP/filesystem/cache/Redis/process/database handles;
@@ -90,6 +98,7 @@ The executable matrix is the source of truth for the exact scenario count. It is
 - commented-out side effects;
 - side-effect text inside strings;
 - side effects outside transactions;
+- facade-like application classes shadowing Laravel facade aliases in another namespace;
 - `DB::afterCommit()` callbacks;
 - inline rule suppression;
 - next-line rule suppression;
@@ -98,10 +107,16 @@ The executable matrix is the source of truth for the exact scenario count. It is
 - baseline filtering;
 - unreadable files and parse errors.
 
-The dependency-free smoke runner executes the same matrix as the Pest suite:
+The dependency-free smoke runner executes the same scanner pipeline as the Pest suite:
 
 ```bash
 php tools/smoke.php
 ```
 
-Pest/Testbench additionally tests command registration, exit codes, output modes, recursive discovery, excludes, baseline persistence, and cross-file metadata.
+The fast benchmark bootstrap smoke is part of `composer check`, while the full informational benchmark remains available as:
+
+```bash
+composer benchmark
+```
+
+Pest/Testbench additionally tests command registration, exit codes, output modes, recursive discovery, excludes, baseline persistence, cross-file metadata, namespace-context isolation and Redis classification refinements.

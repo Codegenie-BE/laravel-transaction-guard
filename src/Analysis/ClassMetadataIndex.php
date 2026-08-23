@@ -102,45 +102,78 @@ final class ClassMetadataIndex
     /** @return array<string, string> */
     public function notificationChannelConnections(string $class): array
     {
-        $key = strtolower(ltrim($class, '\\'));
-        if (array_key_exists($key, $this->notificationChannelConnections)) {
-            return $this->notificationChannelConnections[$key];
+        $seen = [];
+        $current = ltrim($class, '\\');
+
+        while ($current !== '') {
+            $key = strtolower($current);
+            if (isset($seen[$key])) {
+                return [];
+            }
+            $seen[$key] = true;
+            if (array_key_exists($key, $this->notificationChannelConnections)) {
+                return $this->notificationChannelConnections[$key];
+            }
+
+            $metadata = $this->metadata($current);
+            if ($metadata?->parent === null) {
+                return [];
+            }
+            $current = ltrim($metadata->parent, '\\');
         }
 
-        $metadata = $this->metadata($class);
-        if ($metadata?->parent === null) {
-            return [];
-        }
-
-        return $this->notificationChannelConnections($metadata->parent);
+        return [];
     }
 
     public function modelConnection(string $class): ?string
     {
-        $key = strtolower(ltrim($class, '\\'));
-        if (array_key_exists($key, $this->modelConnections)) {
-            return $this->modelConnections[$key];
+        $seen = [];
+        $current = ltrim($class, '\\');
+
+        while ($current !== '') {
+            $key = strtolower($current);
+            if (isset($seen[$key])) {
+                return null;
+            }
+            $seen[$key] = true;
+            if (array_key_exists($key, $this->modelConnections)) {
+                return $this->modelConnections[$key];
+            }
+
+            $metadata = $this->metadata($current);
+            if ($metadata?->parent === null) {
+                return null;
+            }
+            $current = ltrim($metadata->parent, '\\');
         }
 
-        $metadata = $this->metadata($class);
-        if ($metadata?->parent === null) {
-            return null;
-        }
-
-        return $this->modelConnection($metadata->parent);
+        return null;
     }
 
     public function modelRelationTarget(string $class, string $relation): ?string
     {
-        $key = strtolower(ltrim($class, '\\'));
+        $seen = [];
+        $current = ltrim($class, '\\');
         $relation = strtolower($relation);
-        if (isset($this->modelRelations[$key][$relation])) {
-            return $this->modelRelations[$key][$relation];
+
+        while ($current !== '') {
+            $key = strtolower($current);
+            if (isset($seen[$key])) {
+                return null;
+            }
+            $seen[$key] = true;
+            if (isset($this->modelRelations[$key][$relation])) {
+                return $this->modelRelations[$key][$relation];
+            }
+
+            $metadata = $this->metadata($current);
+            if ($metadata?->parent === null) {
+                return null;
+            }
+            $current = ltrim($metadata->parent, '\\');
         }
 
-        $metadata = $this->metadata($class);
-
-        return $metadata?->parent !== null ? $this->modelRelationTarget($metadata->parent, $relation) : null;
+        return null;
     }
 
     public function isDispatchableEvent(string $class): bool
@@ -1085,7 +1118,7 @@ final class ClassMetadataIndex
     {
         $normalized = ltrim($fqcn, '\\');
         $aliases = ['\\'.$normalized];
-        $fallbackImport = $context->imports[$fallback] ?? null;
+        $fallbackImport = $context->importForAlias($fallback);
         if ($fallbackImport === null || strcasecmp(ltrim($fallbackImport, '\\'), $normalized) === 0) {
             $aliases[] = $fallback;
         }

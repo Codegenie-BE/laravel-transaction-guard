@@ -47,7 +47,10 @@ PHP);
         $metadata = $index->metadata('App\\Jobs\\FirstJob');
 
         expect($metadata)->not->toBeNull()
-            ->and($metadata->parent)->toBe('App\\Jobs\\SecondJob');
+            ->and($metadata->parent)->toBe('App\\Jobs\\SecondJob')
+            ->and($index->notificationChannelConnections('App\\Jobs\\FirstJob'))->toBe([])
+            ->and($index->modelConnection('App\\Jobs\\FirstJob'))->toBeNull()
+            ->and($index->modelRelationTarget('App\\Jobs\\FirstJob', 'orders'))->toBeNull();
     } finally {
         @unlink($file);
     }

@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Lowest-supported Laravel 13 dependency validation alongside the existing Laravel 12 floor.
+- Multi-file, multi-namespace and framework-contract regressions for queue/event metadata resolution.
+- Broader Redis command coverage, including modern write commands and conservative handling of unknown methods on proven Redis receivers.
+- PhpRedis-compatible `GETEX` options-array analysis.
+
+### Changed
+
+- Dependabot auto-merge is bound to the exact successfully tested pull-request head.
+- Coupled Laravel/Testbench major dependency upgrades are surfaced together for review.
+- Release archives are validated before version tags are published.
+- Branch cleanup only removes the exact merged branch head.
+- PHP import aliases and analyzer metadata inheritance are resolved more defensively across namespaces, Composer-loaded parents and cycles.
+- Redis `GETEX` distinguishes read-only access from expiry mutations and dynamic options.
+
+### Fixed
+
+- Case-insensitive PHP import alias resolution.
+- Lazy Composer metadata inheritance and recursion guards.
+- Namespace-offset regression coverage that could previously pass without proving both namespace contexts.
+- Redis and Laravel attribute false-positive/false-negative edge cases found during post-v0.4 hardening.
+
 ## [v0.4.0] - 2026-08-22
 
 ### Added
@@ -46,8 +71,6 @@ All notable changes to this project will be documented in this file.
 - Baseline output is deterministic and fingerprints are rooted at the configured project path.
 - Benchmarks now cover larger transaction-free, safe, side-effect-heavy and metadata-heavy workloads.
 
-## [Unreleased]
-
 ## [v0.2.0] - 2026-08-22
 
 ### Added
@@ -58,7 +81,6 @@ All notable changes to this project will be documented in this file.
 - Notification `viaConnections()` queue-connection analysis.
 - SARIF 2.1.0 output for code-scanning integrations.
 - Database-driver-aware `TG012` severity and a lowest-supported-dependency CI job.
-
 - Laravel 13 `Bus::bulk()` analysis distinguishes synchronous commands from commit-sensitive queued jobs, including mixed bulk payloads.
 - Connection-aware manual transaction analysis and `TG021` cross-database-connection write detection.
 - Queued closure, pending chain, raw queue, conditional event, static broadcast, HTTP pool/batch and Process pool coverage.
@@ -74,7 +96,6 @@ All notable changes to this project will be documented in this file.
 - JSON and SARIF rendering substitute invalid UTF-8 source bytes instead of crashing output generation.
 - Release archives are validated before a tag is created, and analyzer benchmarks cover transaction-free, safe-transaction and side-effect-heavy workloads.
 - Temporary self-mutating audit/maintenance workflows are removed after the v0.2 hardening cycle.
-
 - `Bus::dispatch()` now follows Laravel's actual queued-vs-synchronous command semantics and honors indexed after-commit job metadata.
 - Source scanning pre-indexes lines/non-code ranges, caches repeated lookups, uses API-keyword fast paths and avoids repeated sort/filter work on transaction regions.
 - Baseline generation reuses the initial analysis result instead of scanning twice.

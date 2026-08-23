@@ -62,7 +62,8 @@
             "@format:test",
             "@analyse",
             "@check:docs",
-            "@test:smoke"
+            "@test:smoke",
+            "@test:benchmark-smoke"
         ],
         "check:all": [
             "@check",
@@ -76,6 +77,7 @@
         "test": "pest",
         "test:coverage": "pest --coverage --min=80",
         "test:smoke": "@php tools/smoke.php",
+        "test:benchmark-smoke": "@php tools/benchmark.php --smoke --json",
         "benchmark": "@php tools/benchmark.php",
         "check:docs": "@php tools/check-docs.php"
     },
@@ -107,7 +109,7 @@
     },
     "scripts-descriptions": {
         "analyse": "Run Larastan static analysis.",
-        "check": "Run Composer metadata, security, autoload, formatting, static-analysis and smoke checks.",
+        "check": "Run Composer metadata, security, autoload, formatting, static-analysis, documentation and smoke checks.",
         "check:all": "Run the complete fast quality gate and Pest suite.",
         "check:autoload": "Build an optimized autoloader and reject invalid PSR mappings.",
         "check:composer": "Validate composer.json strictly.",
@@ -117,7 +119,8 @@
         "test": "Run the Pest suite.",
         "test:coverage": "Run Pest with the enforced 80% coverage baseline.",
         "test:smoke": "Run the dependency-free transaction-safety regression matrix.",
+        "test:benchmark-smoke": "Boot every benchmark workload with a tiny file set to catch analyzer/tooling integration regressions.",
         "benchmark": "Profile representative transaction-free, safe, side-effect-heavy and mixed analyzer workloads; pass --json for trend capture.",
-        "check:docs": "Verify the canonical rule catalog is represented in public documentation."
+        "check:docs": "Verify the canonical rule catalog and changelog structure are synchronized."
     }
 }
