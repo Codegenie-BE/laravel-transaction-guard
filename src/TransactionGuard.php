@@ -9,6 +9,7 @@ use Codegenie\TransactionGuard\Analysis\AnalysisResult;
 use Codegenie\TransactionGuard\Analysis\Baseline;
 use Codegenie\TransactionGuard\Analysis\ClassMetadataIndex;
 use Codegenie\TransactionGuard\Analysis\Finding;
+use Codegenie\TransactionGuard\Analysis\RedisFindingRefiner;
 use Codegenie\TransactionGuard\Analysis\RuleCatalog;
 use Codegenie\TransactionGuard\Analysis\Severity;
 use Codegenie\TransactionGuard\Analysis\SourceScanner;
@@ -43,6 +44,10 @@ final class TransactionGuard
 
         foreach ($files as $file) {
             foreach ($scanner->scan($file) as $finding) {
+                $finding = RedisFindingRefiner::refine($finding);
+                if ($finding === null) {
+                    continue;
+                }
                 if (RuleCatalog::isDiagnostic($finding->rule)) {
                     $diagnostics[] = $finding;
 
