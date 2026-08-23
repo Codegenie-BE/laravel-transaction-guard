@@ -20,9 +20,9 @@ class FirstJob implements ShouldQueue {}
 DB::transaction(fn () => FirstJob::dispatch());
 
 namespace App\Second;
-use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\DB;
-class SecondJob implements ShouldQueueAfterCommit {}
+class SecondJob implements ShouldQueue {}
 DB::transaction(fn () => SecondJob::dispatch());
 PHP);
 
@@ -33,9 +33,9 @@ PHP);
             static fn ($finding): bool => $finding->rule === 'TG001',
         ));
 
-        expect($jobFindings)->toHaveCount(1)
+        expect($jobFindings)->toHaveCount(2)
             ->and($jobFindings[0]->message)->toContain('FirstJob')
-            ->and($jobFindings[0]->message)->not->toContain('SecondJob');
+            ->and($jobFindings[1]->message)->toContain('SecondJob');
     } finally {
         @unlink($file);
     }
