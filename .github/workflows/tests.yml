@@ -20,32 +20,6 @@ env:
   COMPOSER_MAX_PARALLEL_HTTP: 4
 
 jobs:
-  patch-review-context:
-    name: Temporary review context fix
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'hardening/post-v040-audit' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout hardening branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: hardening/post-v040-audit
-
-      - name: Apply guarded review fix
-        run: python tools/apply-review-context-fix.py
-
-      - name: Commit review fix
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/Analysis/SourceScanner.php
-          git commit -m 'fix: bind facade context checks to active target'
-          git push origin HEAD:hardening/post-v040-audit
-
   quality:
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
     runs-on: ubuntu-latest
