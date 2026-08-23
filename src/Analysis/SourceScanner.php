@@ -2998,7 +2998,7 @@ final class SourceScanner
 
         // Generic class-static matchers also flow through matches(). Only enforce facade
         // binding when the current regex literally embeds the alias returned by facadeAliases().
-        if (! str_contains($pattern, preg_quote($alias, '/'))) {
+        if (stripos($pattern, preg_quote($alias, '/')) === false) {
             return true;
         }
 
