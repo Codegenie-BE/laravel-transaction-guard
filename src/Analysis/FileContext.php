@@ -6,11 +6,20 @@ namespace Codegenie\TransactionGuard\Analysis;
 
 final readonly class FileContext
 {
+    /** @var array<string, string> */
+    private array $normalizedImports;
+
     /** @param array<string, string> $imports */
     public function __construct(
         public string $namespace,
         public array $imports,
-    ) {}
+    ) {
+        $normalized = [];
+        foreach ($imports as $alias => $fqcn) {
+            $normalized[strtolower($alias)] = $fqcn;
+        }
+        $this->normalizedImports = $normalized;
+    }
 
     public function resolve(string $name): string
     {
@@ -30,10 +39,11 @@ final readonly class FileContext
         }
 
         [$first] = explode('\\', $name, 2);
-        if (isset($this->imports[$first])) {
+        $import = $this->normalizedImports[strtolower($first)] ?? null;
+        if ($import !== null) {
             $suffix = substr($name, strlen($first));
 
-            return $this->imports[$first].$suffix;
+            return $import.$suffix;
         }
 
         return $this->namespace !== '' ? $this->namespace.'\\'.$name : $name;
