@@ -28,3 +28,27 @@ PHP);
         @unlink($file);
     }
 });
+
+it('terminates lazy metadata resolution for cyclic parent graphs', function (): void {
+    $temporary = tempnam(sys_get_temp_dir(), 'tg-lazy-cycle-');
+    expect($temporary)->not->toBeFalse();
+    $file = $temporary.'.php';
+    rename($temporary, $file);
+
+    file_put_contents($file, <<<'PHP'
+<?php
+namespace App\Jobs;
+class FirstJob extends SecondJob {}
+class SecondJob extends FirstJob {}
+PHP);
+
+    try {
+        $index = ClassMetadataIndex::fromFiles([$file]);
+        $metadata = $index->metadata('App\\Jobs\\FirstJob');
+
+        expect($metadata)->not->toBeNull()
+            ->and($metadata->parent)->toBe('App\\Jobs\\SecondJob');
+    } finally {
+        @unlink($file);
+    }
+});
