@@ -20,46 +20,6 @@ env:
   COMPOSER_MAX_PARALLEL_HTTP: 4
 
 jobs:
-  patch-final-source:
-    name: Temporary final scanner cleanup
-    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'hardening/post-v040-audit' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout hardening branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: hardening/post-v040-audit
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
-        with:
-          php-version: '8.5'
-          coverage: none
-          tools: composer:v2
-
-      - name: Install formatting dependencies
-        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
-
-      - name: Remove stale context write and format scanner
-        shell: bash
-        run: |
-          set -euo pipefail
-          python tools/apply-final-source-cleanup.py
-          vendor/bin/pint src/Analysis/SourceScanner.php
-
-      - name: Commit final scanner cleanup
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src/Analysis/SourceScanner.php
-          git commit -m 'fix: remove stale scanner context state and format'
-          git push origin HEAD:hardening/post-v040-audit
-
   quality:
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
     runs-on: ubuntu-latest
