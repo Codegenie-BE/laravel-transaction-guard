@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-return [
+$scenarios = [
     'PreparesForDispatch is visible even with afterCommit' => [
         'code' => <<<'PHP'
 <?php
@@ -181,3 +181,5 @@ PHP,
         'rules' => ['TG012'],
     ],
 ];
+
+return array_merge($scenarios, require __DIR__.'/CoverageContracts.php');
