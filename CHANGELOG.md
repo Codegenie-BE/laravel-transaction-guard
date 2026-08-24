@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v0.5.0] - 2026-08-24
+
 ### Added
 
 - Lowest-supported Laravel 13 dependency validation alongside the existing Laravel 12 floor.
