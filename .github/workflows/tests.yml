@@ -16,23 +16,21 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  COMPOSER_MAX_PARALLEL_HTTP: 4
-
 jobs:
-  quality:
+  compatibility:
     name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix:
         include:
           - php: '8.2'
             laravel: '^12.0'
             testbench: '^10.0'
             pest: '^3.0'
+            smoke: true
           - php: '8.3'
             laravel: '^12.0'
             testbench: '^10.0'
@@ -53,10 +51,7 @@ jobs:
             laravel: '^12.0'
             testbench: '^10.0'
             pest: '^3.0'
-          - php: '8.5'
-            laravel: '^13.0'
-            testbench: '^11.0'
-            pest: '^4.0'
+            full_quality: true
 
     steps:
       - name: Checkout
@@ -69,37 +64,54 @@ jobs:
           coverage: none
           tools: composer:v2
 
+      - name: Validate repository Composer metadata
+        if: ${{ matrix.full_quality == true }}
+        run: composer validate --strict
+
       - name: Pin Laravel test dependencies
         run: composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-update --no-interaction
 
       - name: Install dependencies
         run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
 
-      - name: Validate Composer metadata
-        run: composer validate --strict
-
-      - name: Audit dependencies
+      - name: Audit latest Laravel 12 dependency set
+        if: ${{ matrix.full_quality == true }}
         run: composer audit --no-interaction
 
-      - name: Run dependency-free regression matrix
+      - name: Run dependency-free regression matrix on oldest PHP
+        if: ${{ matrix.smoke == true }}
         run: composer test:smoke
 
       - name: Run Pest suite
         run: composer test
 
+      - name: Validate optimized autoloading
+        if: ${{ matrix.full_quality == true }}
+        run: composer check:autoload
+
       - name: Check formatting
+        if: ${{ matrix.full_quality == true }}
         run: composer format:test
 
-      - name: Run static analysis
+      - name: Run static analysis against latest Laravel 12
+        if: ${{ matrix.full_quality == true }}
         run: composer analyse
+
+      - name: Check documentation contracts
+        if: ${{ matrix.full_quality == true }}
+        run: composer check:docs
+
+      - name: Run benchmark bootstrap smoke
+        if: ${{ matrix.full_quality == true }}
+        run: composer test:benchmark-smoke
 
   platform:
     name: ${{ matrix.label }} / PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 4
       matrix:
         include:
           - label: Windows
@@ -145,13 +157,13 @@ jobs:
       - name: Install dependencies
         run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
 
-      - name: Run complete cross-platform quality gate
-        run: composer check:all
+      - name: Run full cross-platform Pest suite
+        run: composer test
 
   lowest:
-    name: Lowest supported dependencies
+    name: Lowest supported Laravel 12 dependencies
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -170,28 +182,19 @@ jobs:
       - name: Resolve lowest supported dependency set
         run: composer update --prefer-lowest --prefer-stable --with-all-dependencies --no-interaction --no-progress
 
-      - name: Validate Composer metadata
-        run: composer validate --strict
-
-      - name: Audit lowest dependency set
+      - name: Audit lowest Laravel 12 dependency set
         run: composer audit --no-interaction
 
-      - name: Validate optimized autoloading
-        run: composer dump-autoload --optimize --strict-psr --no-interaction
-
-      - name: Run dependency-free regression matrix
-        run: composer test:smoke
-
-      - name: Run Pest suite on lowest dependencies
+      - name: Run Pest suite on lowest Laravel 12 dependencies
         run: composer test
 
-      - name: Run static analysis on lowest dependencies
+      - name: Run static analysis on lowest Laravel 12 dependencies
         run: composer analyse
 
   lowest-laravel13:
     name: Lowest supported Laravel 13 dependencies
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -210,17 +213,8 @@ jobs:
       - name: Resolve lowest supported Laravel 13 dependency set
         run: composer update --prefer-lowest --prefer-stable --with-all-dependencies --no-interaction --no-progress
 
-      - name: Validate Composer metadata
-        run: composer validate --strict
-
       - name: Audit lowest Laravel 13 dependency set
         run: composer audit --no-interaction
-
-      - name: Validate optimized autoloading
-        run: composer dump-autoload --optimize --strict-psr --no-interaction
-
-      - name: Run dependency-free regression matrix
-        run: composer test:smoke
 
       - name: Run Pest suite on lowest Laravel 13 dependencies
         run: composer test
@@ -249,6 +243,17 @@ jobs:
 
       - name: Install dependencies
         run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Audit latest Laravel 13 dependency set
+        run: composer audit --no-interaction
+
+      - name: Run dependency-free regression matrix on newest PHP
+        run: composer test:smoke
+
+      - name: Run static analysis against latest Laravel 13
+        env:
+          XDEBUG_MODE: off
+        run: composer analyse
 
       - name: Enforce coverage baseline
         run: composer test:coverage
@@ -299,7 +304,7 @@ jobs:
   required:
     name: Tests / Required
     needs:
-      - quality
+      - compatibility
       - platform
       - lowest
       - lowest-laravel13
@@ -312,7 +317,7 @@ jobs:
     steps:
       - name: Require every test job to succeed
         env:
-          QUALITY_RESULT: ${{ needs.quality.result }}
+          COMPATIBILITY_RESULT: ${{ needs.compatibility.result }}
           PLATFORM_RESULT: ${{ needs.platform.result }}
           LOWEST_RESULT: ${{ needs.lowest.result }}
           LOWEST_LARAVEL13_RESULT: ${{ needs.lowest-laravel13.result }}
@@ -320,7 +325,7 @@ jobs:
           DISTRIBUTION_RESULT: ${{ needs.distribution.result }}
         shell: bash
         run: |
-          test "${QUALITY_RESULT}" = 'success'
+          test "${COMPATIBILITY_RESULT}" = 'success'
           test "${PLATFORM_RESULT}" = 'success'
           test "${LOWEST_RESULT}" = 'success'
           test "${LOWEST_LARAVEL13_RESULT}" = 'success'
