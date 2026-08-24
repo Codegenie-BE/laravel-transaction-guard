@@ -68,6 +68,20 @@ Production usage remains read-only. The analyzer tokenizes source files without 
 
 For large deployed codebases, treat a production scan like any other CLI analysis task: run it explicitly during deployment, maintenance, or another suitable operational window if CPU or filesystem I/O contention matters for that server.
 
+## No `.env` variables required
+
+Transaction Guard itself requires **zero environment variables**. You do not need to add `TRANSACTION_GUARD_*` keys, `APP_ENV` overrides, queue variables, database variables, or any other package-specific values to `.env`.
+
+All Transaction Guard options have built-in defaults in `config/transaction-guard.php`. Configuration is optional and can be changed by publishing that file or by using supported command options. The package runtime and distributed config do not call `env()`, `getenv()`, `putenv()`, `$_ENV`, or `$_SERVER`.
+
+For better static-analysis accuracy, the command reads Laravel's already-resolved `queue` and `database` configuration when those sections are available. This does not create an environment-variable requirement. If those configuration sections are absent, Transaction Guard continues with conservative defaults:
+
+- queue dispatch is not assumed to be after-commit safe;
+- an unknown database driver is treated conservatively for DDL / implicit-commit analysis;
+- the analyzer continues to scan and report findings normally.
+
+This guarantee applies to Transaction Guard itself. The host Laravel application can still have its own configuration requirements to boot Artisan. Transaction Guard does not replace or bypass Laravel application configuration.
+
 ## Usage
 
 ```bash
@@ -207,6 +221,7 @@ When the analyzer cannot prove a queued job's metadata, it prefers a medium-conf
 - PHP 8.2+
 - Laravel 12 and 13
 - Laravel application environments: local, testing, staging, production, CI, and custom environments
+- No Transaction Guard `.env` variables required
 
 Laravel 13 requires a PHP version supported by Laravel itself. CI is designed to test supported Laravel/PHP combinations rather than force unsupported pairs.
 
