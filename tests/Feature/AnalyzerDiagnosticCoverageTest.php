@@ -51,9 +51,18 @@ it('reports TG903 when a requested source subtree cannot be traversed', function
 
     $root = sys_get_temp_dir().DIRECTORY_SEPARATOR.'transaction-guard-unreadable-'.bin2hex(random_bytes(4));
     $blocked = $root.DIRECTORY_SEPARATOR.'blocked';
+    $hidden = $blocked.DIRECTORY_SEPARATOR.'Hidden.php';
     mkdir($blocked, 0777, true);
-    file_put_contents($blocked.DIRECTORY_SEPARATOR.'Hidden.php', '<?php');
+    file_put_contents($hidden, '<?php');
     chmod($blocked, 0000);
+
+    if (is_readable($blocked)) {
+        @chmod($blocked, 0777);
+        @unlink($hidden);
+        @rmdir($blocked);
+        @rmdir($root);
+        $this->markTestSkipped('The current process can bypass directory permission restrictions.');
+    }
 
     try {
         $result = (new TransactionGuard(new AnalysisConfig))->analyze([$root]);
@@ -62,7 +71,7 @@ it('reports TG903 when a requested source subtree cannot be traversed', function
         expect($rules)->toContain('TG903');
     } finally {
         @chmod($blocked, 0777);
-        @unlink($blocked.DIRECTORY_SEPARATOR.'Hidden.php');
+        @unlink($hidden);
         @rmdir($blocked);
         @rmdir($root);
     }
