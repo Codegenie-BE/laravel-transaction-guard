@@ -11,6 +11,14 @@ All notable changes to this project will be documented in this file.
 - Positive and negative executable coverage contracts for every public non-diagnostic Transaction Guard rule.
 - Exhaustive scanner regressions for every finite cache, RateLimiter, Redis, query-builder, Eloquent and relation operation catalog entry.
 - Dedicated integrity regressions for analyzer diagnostics `TG900`, `TG901`, `TG902` and `TG903`.
+- Cross-platform regression coverage that asserts checked-out PHP sources remain LF-normalized.
+
+### Changed
+
+- CI separates runtime/platform-sensitive tests from invariant quality checks, eliminating repeated Composer validation, auditing, smoke, Pint, PHPStan, documentation and benchmark work without removing supported PHP/Laravel/OS coverage.
+- PHP 8.5 / Laravel 13 compatibility is owned by the coverage job instead of running the same Pest suite again in the normal compatibility matrix.
+- Windows and macOS execute the full Pest suite while OS-independent quality checks run on canonical Linux dependency boundaries.
+- Linux and platform matrices may run all combinations concurrently, and Composer uses its default download parallelism instead of an artificial four-request cap.
 
 ## [v0.5.0] - 2026-08-24
 
