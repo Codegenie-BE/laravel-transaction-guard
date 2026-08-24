@@ -92,9 +92,12 @@ Transaction Guard itself:
 - never opens a database connection;
 - never modifies transaction behavior;
 - never sends mail, HTTP requests, jobs, or events;
+- never reads environment variables directly from package runtime or distributed config;
 - performs read-only token/source analysis;
 - uses stable finding fingerprints for baselines;
 - fails conservatively when queue routing/connection selection cannot be proven.
+
+Resolved Laravel queue and database configuration can improve static-analysis precision but is not required by Transaction Guard. If those configuration sections are missing, queue dispatch is not assumed commit-safe and unknown database-driver DDL is classified conservatively rather than treated as safe.
 
 This makes the analyzer suitable for local development, testing, staging, CI, production deployments, and custom Laravel environments. When installed on a production server, it remains an explicitly invoked CLI analysis tool and does not participate in normal HTTP request handling or modify application transaction semantics.
 
