@@ -3,6 +3,18 @@
 return [
     /*
     |--------------------------------------------------------------------------
+    | Environment independence
+    |--------------------------------------------------------------------------
+    |
+    | Transaction Guard requires no .env variables. Every package option has a
+    | built-in default. Resolved Laravel queue/database configuration is used
+    | when available to improve analysis accuracy; missing sections fall back
+    | conservatively and never prevent the analyzer from running.
+    |
+    */
+
+    /*
+    |--------------------------------------------------------------------------
     | Paths
     |--------------------------------------------------------------------------
     |
@@ -25,7 +37,9 @@ return [
 
     /*
     | The default queue connection and its after_commit setting are detected
-    | from config/queue.php. Set this to true/false only to override detection.
+    | from resolved Laravel queue configuration when available. Set this to
+    | true/false only to override detection. Missing queue config is treated
+    | conservatively as not proven after-commit safe.
     */
     'queue_after_commit' => null,
 
