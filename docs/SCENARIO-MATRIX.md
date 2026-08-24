@@ -4,6 +4,24 @@ The executable source of truth is [`tests/Support/ScenarioMatrix.php`](../tests/
 
 The executable matrix is the source of truth for the exact scenario count. It is split into a core matrix plus focused hardening modules and covers these groups:
 
+## Completeness contract
+
+The PHP input space is unbounded, so no finite test suite can truthfully enumerate every possible Laravel program. Transaction Guard instead makes the finite public analyzer contract exhaustive and keeps broad behavioral scenarios around that contract.
+
+The required test suite enforces all of the following:
+
+- every public non-diagnostic `TG` rule in `RuleCatalog` has at least one positive scenario that must report it;
+- every public non-diagnostic `TG` rule has at least one negative/control scenario that must not report it;
+- scenario expectations may only reference canonical rule IDs and may not require and forbid the same rule simultaneously;
+- analyzer integrity diagnostics `TG900`, `TG901`, `TG902` and `TG903` each have dedicated executable regressions;
+- every finite cache mutation, cache-lock terminal and RateLimiter mutation in `OperationCatalog` is exercised through the scanner;
+- every finite Redis mutation and mutating command is exercised, every listed Redis read is required to remain clean, every script command is conservatively reported, and control wrappers are verified not to become mutations by themselves;
+- Redis method/command mutation catalogs must remain equivalent, duplicate-free and disjoint from read/script classifications;
+- every finite query-builder, Eloquent static, Eloquent instance and Eloquent relation mutation catalog entry is exercised through cross-connection `TG021` analysis;
+- adding a new public finding rule or finite catalog entry without matching test coverage therefore fails CI instead of silently reducing coverage.
+
+The broad scenario count remains useful as a regression signal, but the count itself is deliberately not the completeness guarantee.
+
 ## Platform compatibility
 
 The required CI gate validates Linux, Windows and macOS rather than assuming Linux filesystem semantics are portable.
@@ -12,7 +30,8 @@ The required CI gate validates Linux, Windows and macOS rather than assuming Lin
 - Windows runs both boundary stacks: PHP 8.2 / Laravel 12 and PHP 8.5 / Laravel 13;
 - macOS runs both boundary stacks: PHP 8.2 / Laravel 12 and PHP 8.5 / Laravel 13;
 - the Windows/macOS jobs run the complete `composer check:all` gate, including Composer validation/audit, optimized autoloading, Pint, PHPStan, documentation checks, the dependency-free scenario matrix, benchmark bootstrap smoke and Pest;
-- native-filesystem regressions cover paths containing spaces, Windows/Unix separator-stable fingerprints, segment and wildcard excludes, replacement of an existing baseline and absolute Artisan scan paths.
+- native-filesystem regressions cover paths containing spaces, Windows/Unix separator-stable fingerprints, segment and wildcard excludes, replacement of an existing baseline and absolute Artisan scan paths;
+- repository text files are normalized to LF through `.gitattributes`, preventing Windows checkout settings from changing formatter results.
 
 All platform jobs are dependencies of `Tests / Required`, so a platform regression blocks merging.
 
@@ -77,7 +96,9 @@ All platform jobs are dependencies of `Tests / Required`, so a platform regressi
 - Laravel filesystem mutations including streams/directory operations;
 - native filesystem mutations;
 - modern cache writes/invalidation (`putMany`, `remember*`, `flexible`, etc.);
+- all finite catalogued cache and RateLimiter mutations plus representative read-only controls;
 - Redis mutations, commands, increments, publishes, pipelines/transactions;
+- all finite catalogued Redis mutations/read/script classifications;
 - modern Redis write commands such as `DELEX`, `HGETDEL`, `HSETEX`, `XDELEX` and `XACKDEL`;
 - known Redis read-only methods that should remain clean;
 - unknown methods on proven Redis receivers reported conservatively rather than silently ignored;
@@ -117,6 +138,10 @@ All platform jobs are dependencies of `Tests / Required`, so a platform regressi
 - suppression isolation;
 - disabled rules;
 - baseline filtering;
+- read-only cache and Redis controls;
+- resolved transaction callbacks that must not emit `TG014`;
+- normal after-commit jobs that must not emit `TG022`/`TG023`;
+- non-matching custom side-effect patterns;
 - unreadable files and parse errors.
 
 The dependency-free smoke runner executes the same scanner pipeline as the Pest suite:
@@ -131,4 +156,4 @@ The fast benchmark bootstrap smoke is part of `composer check`, while the full i
 composer benchmark
 ```
 
-Pest/Testbench additionally tests command registration, exit codes, output modes, recursive discovery, excludes, baseline persistence, cross-file metadata, namespace-context isolation and Redis classification refinements.
+Pest/Testbench additionally tests command registration, exit codes, output modes, recursive discovery, excludes, baseline persistence, cross-file metadata, namespace-context isolation, operation-catalog completeness, analyzer diagnostics and Redis classification refinements.
