@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Required Windows and macOS CI coverage at the oldest and newest supported PHP/Laravel boundaries, complementing the complete Linux version matrix.
+- Native-filesystem regressions for paths with spaces, wildcard/segment excludes, baseline replacement, absolute Artisan paths, and separator-stable fingerprints.
+
 ## [v0.5.0] - 2026-08-24
 
 ### Added
@@ -50,7 +55,7 @@ All notable changes to this project will be documented in this file.
 - Redis pipelines/transactions inspect inline callback mutations instead of treating the wrapper itself as a mutation.
 - Redis literal commands distinguish known reads, mutations, scripts and unknown future commands.
 - TG021 covers incrementEach/decrementEach, local model setConnection overrides and statically known relation targets.
-- Static event dispatch uses Dispatchable metadata instead of an `App\Events` namespace heuristic.
+- Static event dispatch uses Dispatchable metadata instead of an `App\\Events` namespace heuristic.
 - `dispatchIf(false)` and `dispatchUnless(true)` are constant-folded.
 - DDL findings expose driver-specific semantics and static SQL reduction supports heredoc/concatenated literals.
 - Finding deduplication includes source columns; baselines are written atomically; source indexing handles CR/LF/CRLF consistently.
