@@ -4,6 +4,18 @@ The executable source of truth is [`tests/Support/ScenarioMatrix.php`](../tests/
 
 The executable matrix is the source of truth for the exact scenario count. It is split into a core matrix plus focused hardening modules and covers these groups:
 
+## Platform compatibility
+
+The required CI gate validates Linux, Windows and macOS rather than assuming Linux filesystem semantics are portable.
+
+- Linux runs the complete supported PHP 8.2-8.5 and Laravel 12/13 compatibility matrix;
+- Windows runs both boundary stacks: PHP 8.2 / Laravel 12 and PHP 8.5 / Laravel 13;
+- macOS runs both boundary stacks: PHP 8.2 / Laravel 12 and PHP 8.5 / Laravel 13;
+- the Windows/macOS jobs run the complete `composer check:all` gate, including Composer validation/audit, optimized autoloading, Pint, PHPStan, documentation checks, the dependency-free scenario matrix, benchmark bootstrap smoke and Pest;
+- native-filesystem regressions cover paths containing spaces, Windows/Unix separator-stable fingerprints, segment and wildcard excludes, replacement of an existing baseline and absolute Artisan scan paths.
+
+All platform jobs are dependencies of `Tests / Required`, so a platform regression blocks merging.
+
 ## Transaction boundaries
 
 - `DB::transaction()` callback syntax;
