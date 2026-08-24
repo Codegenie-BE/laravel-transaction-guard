@@ -2,7 +2,7 @@
 
 `codegenie-be/laravel-transaction-guard` statically detects side effects that can escape a Laravel database transaction before the transaction successfully commits.
 
-A database rollback can undo database writes. It cannot unsend an email, undo an HTTP request, put a deleted file back, reverse an already-started process, or stop a queue worker that saw data before commit. Transaction Guard is designed to catch those boundaries in development and CI.
+A database rollback can undo database writes. It cannot unsend an email, undo an HTTP request, put a deleted file back, reverse an already-started process, or stop a queue worker that saw data before commit. Transaction Guard is designed to catch those boundaries wherever your Laravel source is validated or deployed, including local development, testing, staging, CI, and production.
 
 Built and maintained by [Codegenie](https://www.codegenie.be). Open source under the MIT license.
 
@@ -40,11 +40,33 @@ It also recognizes common safe patterns such as:
 
 ## Installation
 
+Transaction Guard supports all Laravel application environments. Choose the Composer dependency type based on where you want the Artisan command to remain available.
+
+For development, staging, and production servers, including deployments that run `composer install --no-dev`:
+
+```bash
+composer require codegenie-be/laravel-transaction-guard
+```
+
+If you only want to run Transaction Guard locally or in CI before deployment:
+
 ```bash
 composer require --dev codegenie-be/laravel-transaction-guard
 ```
 
-The service provider is auto-discovered by Laravel.
+The service provider is auto-discovered by Laravel. The package is console-only: it does not analyze code automatically and it does not add Transaction Guard behavior to normal HTTP requests.
+
+## Environment support
+
+`transaction:guard` is not gated by `APP_ENV`. The same command can be run in `local`, `testing`, `staging`, `production`, or a custom Laravel environment:
+
+```bash
+php artisan transaction:guard
+```
+
+Production usage remains read-only. The analyzer tokenizes source files without executing the analyzed application code, opening database connections, dispatching jobs, sending mail, making HTTP requests, or modifying transaction behavior.
+
+For large deployed codebases, treat a production scan like any other CLI analysis task: run it explicitly during deployment, maintenance, or another suitable operational window if CPU or filesystem I/O contention matters for that server.
 
 ## Usage
 
@@ -54,7 +76,7 @@ php artisan transaction:guard
 
 By default the package scans `app/` and `routes/`.
 
-Useful CI modes:
+Useful automation modes:
 
 ```bash
 php artisan transaction:guard --format=github
@@ -79,7 +101,7 @@ Adopt the guard without fixing every legacy finding immediately:
 php artisan transaction:guard --generate-baseline
 ```
 
-This creates `.transaction-guard-baseline.json`. Existing fingerprints are suppressed; newly introduced findings still fail CI.
+This creates `.transaction-guard-baseline.json`. Existing fingerprints are suppressed; newly introduced findings still fail automated checks.
 
 Ignore the baseline temporarily:
 
@@ -158,7 +180,9 @@ See [`docs/RULES.md`](docs/RULES.md) for rule details and remediation guidance. 
 
 ## Why no runtime hooks?
 
-Transaction Guard does not monkey-patch `DB`, queues, mail, events, or HTTP. It does not change production behavior. The analyzer uses PHP's native tokenizer, so it adds no parser dependency to production or development runtime beyond `ext-tokenizer`.
+Transaction Guard does not monkey-patch `DB`, queues, mail, events, or HTTP. It does not change application transaction semantics in any environment. The analyzer uses PHP's native tokenizer, so it adds no parser dependency beyond `ext-tokenizer`.
+
+When installed as a regular production dependency, the package service provider remains console-only and does not load Transaction Guard configuration or commands into normal HTTP request handling. Analysis only starts when you explicitly run the Artisan command.
 
 This is deliberate: transaction safety is a design decision. Automatically delaying an arbitrary side effect can change semantics or hide an architectural bug.
 
@@ -182,6 +206,7 @@ When the analyzer cannot prove a queued job's metadata, it prefers a medium-conf
 
 - PHP 8.2+
 - Laravel 12 and 13
+- Laravel application environments: local, testing, staging, production, CI, and custom environments
 
 Laravel 13 requires a PHP version supported by Laravel itself. CI is designed to test supported Laravel/PHP combinations rather than force unsupported pairs.
 
