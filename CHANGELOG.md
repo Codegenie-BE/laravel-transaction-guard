@@ -8,6 +8,9 @@ All notable changes to this project will be documented in this file.
 
 - Required Windows and macOS CI coverage at the oldest and newest supported PHP/Laravel boundaries, complementing the complete Linux version matrix.
 - Native-filesystem regressions for paths with spaces, wildcard/segment excludes, baseline replacement, absolute Artisan paths, and separator-stable fingerprints.
+- Positive and negative executable coverage contracts for every public non-diagnostic Transaction Guard rule.
+- Exhaustive scanner regressions for every finite cache, RateLimiter, Redis, query-builder, Eloquent and relation operation catalog entry.
+- Dedicated integrity regressions for analyzer diagnostics `TG900`, `TG901`, `TG902` and `TG903`.
 
 ## [v0.5.0] - 2026-08-24
 
