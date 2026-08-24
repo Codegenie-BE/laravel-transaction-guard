@@ -24,16 +24,20 @@ The broad scenario count remains useful as a regression signal, but the count it
 
 ## Platform compatibility
 
-The required CI gate validates Linux, Windows and macOS rather than assuming Linux filesystem semantics are portable.
+The required CI gate validates Linux, Windows and macOS rather than assuming Linux filesystem semantics are portable. The workflow deliberately separates checks that are sensitive to runtime/platform combinations from invariant checks that only need to run once.
 
-- Linux runs the complete supported PHP 8.2-8.5 and Laravel 12/13 compatibility matrix;
+- Linux covers every supported PHP/Laravel compatibility pair. PHP 8.5 / Laravel 13 is owned by the coverage job, so the normal compatibility matrix does not execute the same Pest suite twice for that exact pair;
 - Windows runs both boundary stacks: PHP 8.2 / Laravel 12 and PHP 8.5 / Laravel 13;
 - macOS runs both boundary stacks: PHP 8.2 / Laravel 12 and PHP 8.5 / Laravel 13;
-- the Windows/macOS jobs run the complete `composer check:all` gate, including Composer validation/audit, optimized autoloading, Pint, PHPStan, documentation checks, the dependency-free scenario matrix, benchmark bootstrap smoke and Pest;
+- Windows and macOS execute the complete Pest suite, including native-filesystem regressions, instead of redundantly rerunning OS-independent Composer metadata, dependency audit, Pint, PHPStan and documentation checks on every platform job;
 - native-filesystem regressions cover paths containing spaces, Windows/Unix separator-stable fingerprints, segment and wildcard excludes, replacement of an existing baseline and absolute Artisan scan paths;
-- repository text files are normalized to LF through `.gitattributes`, preventing Windows checkout settings from changing formatter results.
+- repository PHP sources are asserted to remain LF-normalized on the checked-out filesystem, so `.gitattributes` regressions are still caught on real Windows runners without rerunning Pint four times;
+- dependency-free smoke analysis runs on the oldest and newest supported PHP boundaries;
+- latest and lowest supported Laravel 12/13 dependency sets are audited, while static analysis runs against both latest and lowest framework-major boundaries;
+- Composer metadata, optimized autoloading, formatting, documentation contracts and benchmark bootstrap checks run once on the canonical latest Laravel 12 quality job because their result does not change by operating system;
+- all four platform jobs may run concurrently, while the Linux compatibility matrix may run all of its combinations concurrently.
 
-All platform jobs are dependencies of `Tests / Required`, so a platform regression blocks merging.
+All compatibility, platform, lowest-dependency, coverage and distribution jobs remain dependencies of `Tests / Required`, so removing duplicate work does not weaken the merge gate.
 
 ## Transaction boundaries
 
