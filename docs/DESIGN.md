@@ -2,12 +2,20 @@
 
 ## Goals
 
-- Detect transaction-boundary mistakes before production.
+- Detect transaction-boundary mistakes before release and directly against deployed source when operational verification is useful.
 - Stay read-only: analysis must never execute application code.
 - Add no runtime hooks or infrastructure.
-- Work in local development, shared hosting deployments and CI.
-- Produce stable output suitable for baselines and GitHub Actions annotations.
+- Work in local development, testing, staging, production, shared hosting deployments, CI, and custom Laravel environments.
+- Produce stable output suitable for baselines, deployment checks, and GitHub Actions annotations.
 - Prefer high-signal Laravel-specific checks over a generic PHP linter.
+
+## Environment model
+
+Transaction Guard is environment-agnostic. Analyzer behavior is not conditioned on `APP_ENV` and the Artisan command may be invoked anywhere the package is installed and Laravel can boot its console application.
+
+The package remains command-driven rather than request-driven. Its service provider registers Transaction Guard configuration, commands, and publishing only while Laravel is running in the console. Installing the package as a normal production Composer dependency therefore keeps regular HTTP request handling free from Transaction Guard analysis and package configuration loading.
+
+A production scan has the same safety model as a local or CI scan: source files are tokenized read-only and analyzed application code is never executed. Large scans can still consume CPU and filesystem I/O, so operators should choose an appropriate deployment or maintenance window when server contention matters.
 
 ## Analyzer strategy
 
