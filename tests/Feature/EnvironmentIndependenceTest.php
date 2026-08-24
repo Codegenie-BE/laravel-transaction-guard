@@ -6,11 +6,76 @@ use Codegenie\TransactionGuard\Analysis\AnalysisConfig;
 use Codegenie\TransactionGuard\Analysis\DatabaseDriverPolicy;
 use Codegenie\TransactionGuard\Analysis\Severity;
 
-it('does not access environment variables directly from package runtime or config', function (): void {
-    $root = dirname(__DIR__, 2);
-    $directories = [$root.'/src', $root.'/config'];
+/** @return list<string> */
+$findDirectEnvironmentReads = static function (string $source, string $path): array {
     $forbiddenFunctions = ['env' => true, 'getenv' => true, 'putenv' => true];
     $forbiddenVariables = ['$_ENV' => true, '$_SERVER' => true];
+    $violations = [];
+    $tokens = token_get_all($source, TOKEN_PARSE);
+    $tokenCount = count($tokens);
+
+    foreach ($tokens as $index => $token) {
+        if (! is_array($token)) {
+            continue;
+        }
+
+        [$tokenId, $text, $line] = $token;
+
+        if ($tokenId === T_VARIABLE && isset($forbiddenVariables[$text])) {
+            $violations[] = $path.':'.$line.' uses '.$text;
+
+            continue;
+        }
+
+        if ($tokenId === T_STRING) {
+            $function = strtolower($text);
+        } elseif ($tokenId === T_NAME_FULLY_QUALIFIED) {
+            $function = strtolower(ltrim($text, '\\'));
+        } else {
+            continue;
+        }
+
+        if (! isset($forbiddenFunctions[$function])) {
+            continue;
+        }
+
+        $next = null;
+        for ($cursor = $index + 1; $cursor < $tokenCount; $cursor++) {
+            $candidate = $tokens[$cursor];
+            if (is_array($candidate) && in_array($candidate[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+            $next = $candidate;
+            break;
+        }
+
+        if ($next !== '(') {
+            continue;
+        }
+
+        $previous = null;
+        for ($cursor = $index - 1; $cursor >= 0; $cursor--) {
+            $candidate = $tokens[$cursor];
+            if (is_array($candidate) && in_array($candidate[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                continue;
+            }
+            $previous = $candidate;
+            break;
+        }
+
+        if (is_array($previous) && in_array($previous[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION, T_NEW], true)) {
+            continue;
+        }
+
+        $violations[] = $path.':'.$line.' calls '.$function.'()';
+    }
+
+    return $violations;
+};
+
+it('does not access environment variables directly from package runtime or config', function () use ($findDirectEnvironmentReads): void {
+    $root = dirname(__DIR__, 2);
+    $directories = [$root.'/src', $root.'/config'];
     $violations = [];
 
     foreach ($directories as $directory) {
@@ -30,61 +95,36 @@ it('does not access environment variables directly from package runtime or confi
                 continue;
             }
 
-            $tokens = token_get_all($source, TOKEN_PARSE);
-            $tokenCount = count($tokens);
-
-            foreach ($tokens as $index => $token) {
-                if (! is_array($token)) {
-                    continue;
-                }
-
-                [$tokenId, $text, $line] = $token;
-
-                if ($tokenId === T_VARIABLE && isset($forbiddenVariables[$text])) {
-                    $violations[] = $file->getPathname().':'.$line.' uses '.$text;
-
-                    continue;
-                }
-
-                $function = strtolower($text);
-                if ($tokenId !== T_STRING || ! isset($forbiddenFunctions[$function])) {
-                    continue;
-                }
-
-                $next = null;
-                for ($cursor = $index + 1; $cursor < $tokenCount; $cursor++) {
-                    $candidate = $tokens[$cursor];
-                    if (is_array($candidate) && in_array($candidate[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
-                        continue;
-                    }
-                    $next = $candidate;
-                    break;
-                }
-
-                if ($next !== '(') {
-                    continue;
-                }
-
-                $previous = null;
-                for ($cursor = $index - 1; $cursor >= 0; $cursor--) {
-                    $candidate = $tokens[$cursor];
-                    if (is_array($candidate) && in_array($candidate[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
-                        continue;
-                    }
-                    $previous = $candidate;
-                    break;
-                }
-
-                if (is_array($previous) && in_array($previous[0], [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON, T_FUNCTION], true)) {
-                    continue;
-                }
-
-                $violations[] = $file->getPathname().':'.$line.' calls '.$function.'()';
-            }
+            array_push($violations, ...$findDirectEnvironmentReads($source, $file->getPathname()));
         }
     }
 
     expect($violations)->toBe([]);
+});
+
+it('recognizes direct and fully qualified environment reads in the source gate', function () use ($findDirectEnvironmentReads): void {
+    $unsafe = <<<'PHP'
+<?php
+env('A');
+\env('B');
+getenv('C');
+\getenv('D');
+putenv('E=1');
+\putenv('F=1');
+$_ENV['G'];
+$_SERVER['H'];
+PHP;
+
+    $safe = <<<'PHP'
+<?php
+$service->env();
+Service::env();
+new env();
+function env(): string { return 'local helper'; }
+PHP;
+
+    expect($findDirectEnvironmentReads($unsafe, 'unsafe.php'))->toHaveCount(8)
+        ->and($findDirectEnvironmentReads($safe, 'safe.php'))->toBe([]);
 });
 
 it('runs when host queue and database configuration are absent', function (): void {
