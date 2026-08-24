@@ -5,6 +5,7 @@
 - Detect transaction-boundary mistakes before release and directly against deployed source when operational verification is useful.
 - Stay read-only: analysis must never execute application code.
 - Add no runtime hooks or infrastructure.
+- Require no Transaction Guard environment variables.
 - Work in local development, testing, staging, production, shared hosting deployments, CI, and custom Laravel environments.
 - Produce stable output suitable for baselines, deployment checks, and GitHub Actions annotations.
 - Prefer high-signal Laravel-specific checks over a generic PHP linter.
@@ -13,9 +14,17 @@
 
 Transaction Guard is environment-agnostic. Analyzer behavior is not conditioned on `APP_ENV` and the Artisan command may be invoked anywhere the package is installed and Laravel can boot its console application.
 
+Transaction Guard has no package-level `.env` contract. Runtime source and distributed package config must not read `env()`, `getenv()`, `putenv()`, `$_ENV`, or `$_SERVER`. Package options use literal defaults and may be changed through Laravel configuration or command options instead of environment variables.
+
+The analyzer may inspect Laravel's already-resolved queue and database configuration because those values affect static transaction semantics. They are optional inputs rather than boot requirements. Missing queue configuration defaults to no proven after-commit guarantee. Missing database-driver information remains unknown and is handled conservatively, including critical treatment for driver-unknown DDL risk.
+
+This independence is enforced by regression coverage that scans `src/` and `config/` for direct environment reads and executes the Artisan command with the host application's queue and database configuration removed.
+
 The package remains command-driven rather than request-driven. Its service provider registers Transaction Guard configuration, commands, and publishing only while Laravel is running in the console. Installing the package as a normal production Composer dependency therefore keeps regular HTTP request handling free from Transaction Guard analysis and package configuration loading.
 
 A production scan has the same safety model as a local or CI scan: source files are tokenized read-only and analyzed application code is never executed. Large scans can still consume CPU and filesystem I/O, so operators should choose an appropriate deployment or maintenance window when server contention matters.
+
+The host Laravel application remains responsible for its own bootstrap configuration. Environment independence means Transaction Guard introduces no additional `.env` requirement; it does not claim to remove configuration requirements imposed by Laravel or the application itself.
 
 ## Analyzer strategy
 

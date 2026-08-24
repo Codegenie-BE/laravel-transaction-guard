@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - Broader Redis command coverage, including modern write commands and conservative handling of unknown methods on proven Redis receivers.
 - PhpRedis-compatible `GETEX` options-array analysis.
 - Production-environment regression coverage for the `transaction:guard` Artisan command.
+- Environment-independence regression coverage that rejects direct environment reads in package runtime/config and executes the command with host queue/database configuration absent.
 
 ### Changed
 
@@ -22,6 +23,7 @@ All notable changes to this project will be documented in this file.
 - Redis `GETEX` distinguishes read-only access from expiry mutations and dynamic options.
 - Environment support is explicitly documented for local, testing, staging, CI, production, and custom Laravel environments.
 - The service provider now remains fully console-only, including configuration loading, so production installation does not add Transaction Guard behavior to normal HTTP requests.
+- Transaction Guard now has an explicit zero-`.env` package contract: all package options have built-in defaults, resolved Laravel queue/database config is optional, and missing framework config is handled conservatively.
 
 ### Fixed
 
