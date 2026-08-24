@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Multi-file, multi-namespace and framework-contract regressions for queue/event metadata resolution.
 - Broader Redis command coverage, including modern write commands and conservative handling of unknown methods on proven Redis receivers.
 - PhpRedis-compatible `GETEX` options-array analysis.
+- Production-environment regression coverage for the `transaction:guard` Artisan command.
 
 ### Changed
 
@@ -19,6 +20,8 @@ All notable changes to this project will be documented in this file.
 - Branch cleanup only removes the exact merged branch head.
 - PHP import aliases and analyzer metadata inheritance are resolved more defensively across namespaces, Composer-loaded parents and cycles.
 - Redis `GETEX` distinguishes read-only access from expiry mutations and dynamic options.
+- Environment support is explicitly documented for local, testing, staging, CI, production, and custom Laravel environments.
+- The service provider now remains fully console-only, including configuration loading, so production installation does not add Transaction Guard behavior to normal HTTP requests.
 
 ### Fixed
 
