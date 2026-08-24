@@ -96,7 +96,7 @@ Transaction Guard itself:
 - uses stable finding fingerprints for baselines;
 - fails conservatively when queue routing/connection selection cannot be proven.
 
-This makes the package suitable for local development and CI without becoming a production runtime dependency.
+This makes the analyzer suitable for local development, testing, staging, CI, production deployments, and custom Laravel environments. When installed on a production server, it remains an explicitly invoked CLI analysis tool and does not participate in normal HTTP request handling or modify application transaction semantics.
 
 ## v0.2 analyzer hardening
 
