@@ -8,6 +8,24 @@ it('registers the transaction guard command', function (): void {
         ->assertSuccessful();
 });
 
+it('executes successfully when the Laravel environment is production', function (): void {
+    $file = tempnam(sys_get_temp_dir(), 'tg-production-').'.php';
+    file_put_contents($file, "<?php\nuse Illuminate\\Support\\Facades\\DB;\nDB::transaction(fn () => DB::table('x')->count());\n");
+    $originalEnvironment = $this->app['env'];
+
+    try {
+        $this->app['env'] = 'production';
+
+        expect($this->app->environment())->toBe('production');
+
+        $this->artisan('transaction:guard', ['paths' => [$file]])
+            ->assertSuccessful();
+    } finally {
+        $this->app['env'] = $originalEnvironment;
+        @unlink($file);
+    }
+});
+
 it('returns success for a safe file', function (): void {
     $file = tempnam(sys_get_temp_dir(), 'tg-safe-').'.php';
     file_put_contents($file, "<?php\nuse Illuminate\\Support\\Facades\\DB;\nDB::transaction(fn () => DB::table('x')->count());\n");
