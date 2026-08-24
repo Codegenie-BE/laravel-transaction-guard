@@ -36,6 +36,16 @@ PHP,
         'rules' => [],
         'absent' => ['TG001', 'TG022', 'TG023'],
     ],
+    'read only cache lookup remains clean' => [
+        'code' => <<<'PHP'
+<?php
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+DB::transaction(function () { Cache::get('order:1'); });
+PHP,
+        'rules' => [],
+        'absent' => ['TG008'],
+    ],
     'non matching custom side effect pattern remains clean' => [
         'code' => <<<'PHP'
 <?php
