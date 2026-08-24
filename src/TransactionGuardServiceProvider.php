@@ -11,6 +11,10 @@ final class TransactionGuardServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
         $this->mergeConfigFrom(__DIR__.'/../config/transaction-guard.php', 'transaction-guard');
     }
 
