@@ -93,6 +93,60 @@ jobs:
       - name: Run static analysis
         run: composer analyse
 
+  platform:
+    name: ${{ matrix.label }} / PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - label: Windows
+            runner: windows-latest
+            php: '8.2'
+            laravel: '^12.0'
+            testbench: '^10.0'
+            pest: '^3.0'
+          - label: Windows
+            runner: windows-latest
+            php: '8.5'
+            laravel: '^13.0'
+            testbench: '^11.0'
+            pest: '^4.0'
+          - label: macOS
+            runner: macos-latest
+            php: '8.2'
+            laravel: '^12.0'
+            testbench: '^10.0'
+            pest: '^3.0'
+          - label: macOS
+            runner: macos-latest
+            php: '8.5'
+            laravel: '^13.0'
+            testbench: '^11.0'
+            pest: '^4.0'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Pin Laravel test dependencies
+        run: composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-update --no-interaction
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --with-all-dependencies --no-interaction --no-progress
+
+      - name: Run complete cross-platform quality gate
+        run: composer check:all
+
   lowest:
     name: Lowest supported dependencies
     runs-on: ubuntu-latest
@@ -245,6 +299,7 @@ jobs:
     name: Tests / Required
     needs:
       - quality
+      - platform
       - lowest
       - lowest-laravel13
       - coverage
@@ -257,6 +312,7 @@ jobs:
       - name: Require every test job to succeed
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
+          PLATFORM_RESULT: ${{ needs.platform.result }}
           LOWEST_RESULT: ${{ needs.lowest.result }}
           LOWEST_LARAVEL13_RESULT: ${{ needs.lowest-laravel13.result }}
           COVERAGE_RESULT: ${{ needs.coverage.result }}
@@ -264,6 +320,7 @@ jobs:
         shell: bash
         run: |
           test "${QUALITY_RESULT}" = 'success'
+          test "${PLATFORM_RESULT}" = 'success'
           test "${LOWEST_RESULT}" = 'success'
           test "${LOWEST_LARAVEL13_RESULT}" = 'success'
           test "${COVERAGE_RESULT}" = 'success'
