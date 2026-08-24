@@ -52,7 +52,7 @@ it('discovers native paths with spaces and honors segment and wildcard excludes'
 
     try {
         $files = (new TransactionGuard)->discoverPhpFiles([$root], ['vendor', 'generated/*']);
-        $normalized = array_map(static fn (string $path): string => str_replace('\\\\', '/', $path), $files);
+        $normalized = array_map(static fn (string $path): string => str_replace('\\', '/', $path), $files);
 
         expect($files)->toHaveCount(1)
             ->and($normalized[0])->toEndWith('/app/Nested Folder/Keep.php');
