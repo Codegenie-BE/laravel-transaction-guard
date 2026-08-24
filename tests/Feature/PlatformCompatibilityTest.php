@@ -106,3 +106,33 @@ it('accepts an absolute Artisan scan path containing spaces on the native platfo
         @rmdir($root);
     }
 });
+
+it('keeps checked out PHP sources LF normalized on every operating system', function (): void {
+    $root = dirname(__DIR__, 2);
+    $crlfFiles = [];
+
+    foreach (['config', 'src', 'tests', 'tools'] as $directory) {
+        $path = $root.DIRECTORY_SEPARATOR.$directory;
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+        );
+
+        foreach ($iterator as $file) {
+            if (! $file->isFile() || strtolower($file->getExtension()) !== 'php') {
+                continue;
+            }
+
+            $contents = file_get_contents($file->getPathname());
+            if (! is_string($contents) || ! str_contains($contents, "\r\n")) {
+                continue;
+            }
+
+            $relative = substr($file->getPathname(), strlen($root) + 1);
+            $crlfFiles[] = str_replace('\\', '/', $relative);
+        }
+    }
+
+    sort($crlfFiles);
+
+    expect($crlfFiles)->toBe([]);
+});
